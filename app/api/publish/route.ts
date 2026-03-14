@@ -75,41 +75,110 @@ const publishToInstagram = async (post: PalOptPost, settings: PalOptSettings): P
 const publishToBlog = async (post: PalOptPost, settings: PalOptSettings): Promise<PublishResult> => {
   const platform: Platform = 'blog';
   try {
-    const { blogUrl, blogWpUsername, blogApiKey } = settings;
-    if (!blogUrl || !blogWpUsername || !blogApiKey) {
-      return { platform, success: false, error: 'Blog API設定が不足しています。' };
-    }
     if (!post.blogBodyHtml) {
       return { platform, success: false, error: 'ブログ本文がありません。' };
     }
 
-    const wpApiUrl = `${blogUrl.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-    const credentials = Buffer.from(`${blogWpUsername}:${blogApiKey}`).toString('base64');
-
-    const wpRes = await fetch(wpApiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: JSON.stringify({
-        title: post.blogTitle || post.title,
-        content: post.blogBodyHtml,
-        slug: post.blogSlug || undefined,
-        status: 'publish',
-      }),
-    });
-
-    const wpBody = await wpRes.json();
-
-    if (!wpRes.ok || !wpBody?.id) {
-      return { platform, success: false, error: `ブログ投稿失敗: ${wpBody?.message || 'unknown'}` };
+    const { blogUrl, blogWpUsername, blogApiKey } = settings;
+    const wantsWp = Boolean(blogUrl && blogWpUsername && blogApiKey);
+    const wantsStudio = Boolean(settings.hasPalStudio);
+    if (!wantsWp && !wantsStudio) {
+      return { platform, success: false, error: 'Blog API設定が不足しています。' };
     }
 
-    return { platform, success: true, postId: String(wpBody.id) };
+    const errors: string[] = [];
+    let wpPostId: string | undefined;
+    let studioPostId: string | undefined;
+
+    if (wantsWp) {
+      const wpApiUrl = `${blogUrl!.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
+      const credentials = Buffer.from(`${blogWpUsername}:${blogApiKey}`).toString('base64');
+
+      const wpRes = await fetch(wpApiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Basic ${credentials}`,
+        },
+        body: JSON.stringify({
+          title: post.blogTitle || post.title,
+          content: post.blogBodyHtml,
+          slug: post.blogSlug || undefined,
+          status: 'publish',
+        }),
+      });
+
+      const wpBody = await wpRes.json();
+
+      if (!wpRes.ok || !wpBody?.id) {
+        errors.push(`WordPress: ${wpBody?.message || 'unknown'}`);
+      } else {
+        wpPostId = String(wpBody.id);
+      }
+    }
+
+    if (wantsStudio) {
+      const studioResult = await publishToPalStudio(post);
+      if (!studioResult.success) {
+        errors.push(`pal_studio: ${studioResult.error || 'unknown'}`);
+      } else if (studioResult.postId) {
+        studioPostId = studioResult.postId;
+      }
+    }
+
+    if (errors.length > 0) {
+      return { platform, success: false, error: `ブログ投稿失敗: ${errors.join(' / ')}` };
+    }
+
+    return { platform, success: true, postId: wpPostId || studioPostId };
   } catch (error: unknown) {
     return { platform, success: false, error: error instanceof Error ? error.message : 'ブログ投稿エラー' };
   }
+};
+
+const publishToPalStudio = async (post: PalOptPost): Promise<{ success: boolean; postId?: string; error?: string }> => {
+  const origin = (process.env.PAL_STUDIO_ORIGIN || process.env.NEXT_PUBLIC_STUDIO_ORIGIN || '').replace(/\/$/, '');
+  const apiKey = process.env.PAL_STUDIO_ADMIN_API_KEY || '';
+
+  if (!origin) {
+    return { success: false, error: 'pal_studioの接続先が未設定です。' };
+  }
+  if (!apiKey) {
+    return { success: false, error: 'pal_studioのAPIキーが未設定です。' };
+  }
+
+  const payload = {
+    paletteId: post.paletteId,
+    post: {
+      id: `palopt-${post.id}`,
+      title: post.blogTitle || post.title,
+      slug: post.blogSlug || '',
+      bodyHtml: post.blogBodyHtml || '',
+      excerpt: '',
+      status: 'published',
+      postType: 'blog',
+      tags: Array.isArray(post.keywords) ? post.keywords : [],
+      publishedAt: post.publishedAt || new Date().toISOString(),
+      imageUrl: post.instagramImageUrl || post.imageUrls?.[0] || '',
+    },
+  };
+
+  const res = await fetch(`${origin}/api/admin/posts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-studio-admin-key': apiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body?.success === false) {
+    return { success: false, error: body?.error || `pal_studio投稿に失敗しました (${res.status})` };
+  }
+
+  const postId = body?.post?.id ? String(body.post.id) : undefined;
+  return { success: true, postId };
 };
 
 // ── Google Business Profile ───────────────────────────────────────────────────
