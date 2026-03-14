@@ -18,8 +18,12 @@ export async function POST(req: NextRequest) {
     }
 
     const formData = await req.formData();
+    // pal_db requires uppercase A0001 format
+    const paletteId = String(session.customerId || '').trim().toUpperCase();
     if (!formData.has('paletteId')) {
-      formData.append('paletteId', session.customerId || '');
+      formData.append('paletteId', paletteId);
+    } else {
+      formData.set('paletteId', paletteId);
     }
 
     // Proxy to pal_db with timeout
