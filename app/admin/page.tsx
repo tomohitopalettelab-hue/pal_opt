@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Users, Settings, Instagram, Globe, FileText, Save, LogOut,
   ChevronRight, CheckCircle, Clock, AlertCircle, Tag, Plus, X,
-  BarChart3, Calendar,
+  BarChart3, Calendar, ArrowLeft,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -37,8 +37,20 @@ type Post = {
   id: string;
   paletteId: string;
   title: string;
+  topic?: string;
+  keywords?: string[];
+  targetAudience?: string | null;
   status: string;
   publishedPlatforms: string[];
+  instagramCaption?: string | null;
+  instagramImageUrl?: string | null;
+  blogTitle?: string | null;
+  blogBodyHtml?: string | null;
+  blogSlug?: string | null;
+  gbpSummary?: string | null;
+  gbpCallToAction?: string | null;
+  errorLog?: string | null;
+  publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -94,6 +106,7 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [newKeyword, setNewKeyword] = useState('');
   const [error, setError] = useState('');
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load accounts
@@ -157,6 +170,7 @@ export default function AdminPage() {
   const handleSelectAccount = (account: Account) => {
     setSelectedAccount(account);
     setSaveStatus('idle');
+    setSelectedPost(null);
     loadSettings(account.paletteId);
   };
 

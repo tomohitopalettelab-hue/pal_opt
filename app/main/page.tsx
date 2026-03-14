@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Sparkles, Instagram, FileText, Globe, Upload, X, Tag, Plus,
   CheckCircle, Clock, AlertCircle, Send, LogOut, ChevronDown,
-  ChevronUp, Eye, Loader2,
+  ChevronUp, Eye, Loader2, ChevronRight, ArrowLeft,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -12,11 +12,23 @@ import {
 type Post = {
   id: string;
   title: string;
+  topic?: string;
+  keywords?: string[];
+  targetAudience?: string | null;
+  imageUrls?: string[];
   status: string;
   publishedPlatforms: string[];
   instagramCaption?: string | null;
+  instagramImageUrl?: string | null;
   blogTitle?: string | null;
+  blogBodyHtml?: string | null;
+  blogSlug?: string | null;
   gbpSummary?: string | null;
+  gbpCallToAction?: string | null;
+  errorLog?: string | null;
+  approvedAt?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string;
   updatedAt: string;
 };
 
@@ -34,7 +46,7 @@ type PublishState = {
   gbp: PlatformPublishState;
 };
 
-type AppState = 'login' | 'idle' | 'generating' | 'preview' | 'publishing';
+type AppState = 'login' | 'idle' | 'generating' | 'preview' | 'publishing' | 'detail';
 
 const ACCENT = '#A62183';
 const ACCENT_DARK = '#8a1a6d';
@@ -123,6 +135,163 @@ function LoginPanel({ onLogin }: { onLogin: (paletteId: string) => void }) {
   );
 }
 
+// ── Status Badge ──────────────────────────────────────────────────────────────
+
+const statusBadge = (status: string) => {
+  const map: Record<string, { label: string; color: string }> = {
+    draft:     { label: '下書き',   color: 'bg-slate-100 text-slate-500' },
+    preview:   { label: 'プレビュー', color: 'bg-blue-50 text-blue-600' },
+    approved:  { label: '承認済み', color: 'bg-yellow-50 text-yellow-700' },
+    published: { label: '投稿済み', color: 'bg-green-50 text-green-700' },
+    failed:    { label: 'エラー',   color: 'bg-red-50 text-red-600' },
+  };
+  const b = map[status] || map.draft;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${b.color}`}>{b.label}</span>;
+};
+
+// ── Post Detail View ───────────────────────────────────────────────────────────
+
+function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
+  const ACCENT = '#A62183';
+  return (
+    <div className="space-y-4">
+      {/* Back button + header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 px-2 py-1.5 rounded-lg hover:bg-white transition-colors border border-slate-200 bg-white shadow-sm"
+        >
+          <ArrowLeft size={12} />戻る
+        </button>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-black text-slate-800 truncate">{post.title || '（タイトルなし）'}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            {statusBadge(post.status)}
+            <span className="text-[10px] text-slate-400">
+              {post.publishedAt
+                ? `投稿: ${new Date(post.publishedAt).toLocaleDateString('ja-JP')}`
+                : `更新: ${new Date(post.updatedAt).toLocaleDateString('ja-JP')}`}
+            </span>
+          </div>
+        </div>
+        <div className="flex gap-1">
+          {['instagram','blog','gbp'].map((p) => {
+            const published = post.publishedPlatforms.includes(p);
+            return (
+              <span key={p} className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${published ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
+                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Meta info */}
+      {(post.keywords?.length || post.targetAudience) && (
+        <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-wrap gap-3 text-xs">
+          {post.keywords?.length ? (
+            <div>
+              <span className="text-slate-400 font-bold">キーワード：</span>
+              {post.keywords.map((k) => (
+                <span key={k} className="inline-block ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ backgroundColor: '#f5e6f0', color: ACCENT }}>{k}</span>
+              ))}
+            </div>
+          ) : null}
+          {post.targetAudience && (
+            <div><span className="text-slate-400 font-bold">ターゲット：</span>{post.targetAudience}</div>
+          )}
+        </div>
+      )}
+
+      {/* Content cards */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* Instagram */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+            <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ backgroundColor: '#E1306C20' }}>
+              <Instagram size={11} style={{ color: '#E1306C' }} />
+            </div>
+            <p className="text-xs font-bold text-slate-700">Instagram</p>
+            {post.publishedPlatforms.includes('instagram') && <CheckCircle size={12} className="ml-auto text-green-500" />}
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.instagramImageUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={post.instagramImageUrl} alt="" className="w-full aspect-square object-cover rounded-lg mb-3 border border-slate-100" />
+            )}
+            {post.instagramCaption ? (
+              <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{post.instagramCaption}</p>
+            ) : (
+              <p className="text-xs text-slate-400 italic">コンテンツなし</p>
+            )}
+          </div>
+        </div>
+
+        {/* Blog */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+            <div className="w-5 h-5 rounded-md flex items-center justify-center bg-blue-50">
+              <FileText size={11} className="text-blue-600" />
+            </div>
+            <p className="text-xs font-bold text-slate-700">ブログ記事</p>
+            {post.publishedPlatforms.includes('blog') && <CheckCircle size={12} className="ml-auto text-green-500" />}
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.blogTitle && (
+              <p className="text-sm font-black text-slate-800 mb-2 leading-snug">{post.blogTitle}</p>
+            )}
+            {post.blogSlug && (
+              <p className="text-[10px] text-slate-400 mb-2 font-mono">/{post.blogSlug}</p>
+            )}
+            {post.blogBodyHtml ? (
+              <div
+                className="text-xs text-slate-600 leading-relaxed prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: post.blogBodyHtml }}
+              />
+            ) : (
+              <p className="text-xs text-slate-400 italic">コンテンツなし</p>
+            )}
+          </div>
+        </div>
+
+        {/* GBP */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+            <div className="w-5 h-5 rounded-md flex items-center justify-center bg-green-50">
+              <Globe size={11} className="text-green-600" />
+            </div>
+            <p className="text-xs font-bold text-slate-700">GBP最新情報</p>
+            {post.publishedPlatforms.includes('gbp') && <CheckCircle size={12} className="ml-auto text-green-500" />}
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.gbpSummary ? (
+              <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{post.gbpSummary}</p>
+            ) : (
+              <p className="text-xs text-slate-400 italic">コンテンツなし</p>
+            )}
+            {post.gbpCallToAction && (
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400">CTA</span>
+                <p className="text-xs font-bold text-blue-600 mt-0.5">{post.gbpCallToAction}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Error log */}
+      {post.errorLog && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p className="text-xs font-bold text-red-700 mb-1 flex items-center gap-1">
+            <AlertCircle size={12} />エラーログ
+          </p>
+          <p className="text-[11px] text-red-600 font-mono whitespace-pre-wrap">{post.errorLog}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Preview Card ──────────────────────────────────────────────────────────────
 
 function PreviewCard({
@@ -183,6 +352,7 @@ export default function MainPage() {
   const [paletteId, setPaletteId] = useState('');
   const [posts, setPosts] = useState<Post[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [selectedHistoryPost, setSelectedHistoryPost] = useState<Post | null>(null);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -440,9 +610,9 @@ export default function MainPage() {
         <span className="text-slate-300">|</span>
         <span className="text-xs text-slate-500 font-mono">{paletteId}</span>
         <div className="ml-auto flex items-center gap-2">
-          {appState === 'preview' && (
+          {(appState === 'preview' || appState === 'detail') && (
             <button
-              onClick={resetForm}
+              onClick={() => { setSelectedHistoryPost(null); resetForm(); }}
               className="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-slate-100 transition-colors"
             >
               新規作成
@@ -604,19 +774,33 @@ export default function MainPage() {
               </button>
               {showHistory && (
                 <div className="px-3 pb-3 space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-                  {posts.map((post) => (
-                    <div key={post.id} className="bg-slate-50 rounded-lg p-2.5">
-                      <p className="text-xs font-bold text-slate-700 truncate">{post.title || '（タイトルなし）'}</p>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className="text-[9px] text-slate-400">{new Date(post.updatedAt).toLocaleDateString('ja-JP')}</span>
-                        {post.publishedPlatforms.map((p) => (
-                          <span key={p} className="text-[9px] bg-green-50 text-green-700 px-1 py-0.5 rounded font-bold">
-                            {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                  {posts.map((post) => {
+                    const isSelected = selectedHistoryPost?.id === post.id;
+                    return (
+                      <button
+                        key={post.id}
+                        onClick={() => { setSelectedHistoryPost(post); setAppState('detail'); }}
+                        className="w-full bg-slate-50 rounded-lg p-2.5 text-left transition-colors hover:bg-slate-100 flex items-center gap-2"
+                        style={isSelected ? { backgroundColor: '#f5e6f0', outline: `1.5px solid ${ACCENT}40` } : {}}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-slate-700 truncate">{post.title || '（タイトルなし）'}</p>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[9px] text-slate-400">{new Date(post.updatedAt).toLocaleDateString('ja-JP')}</span>
+                            {post.publishedPlatforms.map((p) => (
+                              <span key={p} className="text-[9px] bg-green-50 text-green-700 px-1 py-0.5 rounded font-bold">
+                                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+                              </span>
+                            ))}
+                            {post.status === 'failed' && (
+                              <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded font-bold">Error</span>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronRight size={12} className="text-slate-300 flex-shrink-0" />
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -635,6 +819,13 @@ export default function MainPage() {
                 左のフォームにタイトルやキーワードを入力して<br />「コンテンツ生成」ボタンを押してください
               </p>
             </div>
+          )}
+
+          {appState === 'detail' && selectedHistoryPost && (
+            <PostDetailView
+              post={selectedHistoryPost}
+              onBack={() => { setSelectedHistoryPost(null); setAppState('idle'); }}
+            />
           )}
 
           {appState === 'generating' && (
