@@ -266,8 +266,9 @@ export default function MainPage() {
       } else {
         setImageUploadError(data.error || '画像アップロードに失敗しました。');
       }
-    } catch {
-      setImageUploadError('画像アップロード中にエラーが発生しました。');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setImageUploadError(`画像アップロード中にエラーが発生しました。(${msg})`);
     } finally {
       setIsUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
