@@ -363,33 +363,170 @@ export default function AdminPage() {
                 <div className="p-8 text-center text-xs text-slate-400">投稿履歴がありません</div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {posts.slice(0, 10).map((post) => (
-                    <div key={post.id} className="px-5 py-3 flex items-center gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate">{post.title || '（タイトルなし）'}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <Calendar size={10} className="text-slate-400" />
-                          <span className="text-[10px] text-slate-400">
-                            {new Date(post.updatedAt).toLocaleDateString('ja-JP')}
-                          </span>
+                  {posts.slice(0, 20).map((post) => {
+                    const isSelected = selectedPost?.id === post.id;
+                    return (
+                      <button
+                        key={post.id}
+                        onClick={() => setSelectedPost(isSelected ? null : post)}
+                        className="w-full px-5 py-3 flex items-center gap-4 text-left transition-colors hover:bg-slate-50"
+                        style={isSelected ? { backgroundColor: ACCENT_LIGHT } : {}}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate">{post.title || '（タイトルなし）'}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Calendar size={10} className="text-slate-400" />
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(post.updatedAt).toLocaleDateString('ja-JP')}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {post.publishedPlatforms.map((p) => (
-                          <span key={p} className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-bold">
-                            {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
-                          </span>
-                        ))}
-                        {statusBadge(post.status)}
-                      </div>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-2">
+                          {post.publishedPlatforms.map((p) => (
+                            <span key={p} className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-bold">
+                              {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+                            </span>
+                          ))}
+                          {statusBadge(post.status)}
+                          <ChevronRight size={12} className="text-slate-300" />
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
         )}
       </main>
+
+      {/* ─── POST DETAIL DRAWER ────────────────────────────────────────────── */}
+      {selectedPost && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 backdrop-blur-sm p-6" onClick={() => setSelectedPost(null)}>
+          <div
+            className="w-full max-w-4xl max-h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden mt-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drawer header */}
+            <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100 flex-shrink-0">
+              <button
+                onClick={() => setSelectedPost(null)}
+                className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 px-2 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                <ArrowLeft size={12} />閉じる
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-black text-slate-800 truncate">{selectedPost.title || '（タイトルなし）'}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {statusBadge(selectedPost.status)}
+                  <span className="text-[10px] text-slate-400 font-mono">{selectedPost.paletteId}</span>
+                  <span className="text-[10px] text-slate-400">
+                    {selectedPost.publishedAt
+                      ? `投稿: ${new Date(selectedPost.publishedAt).toLocaleDateString('ja-JP')}`
+                      : `更新: ${new Date(selectedPost.updatedAt).toLocaleDateString('ja-JP')}`}
+                  </span>
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                {['instagram','blog','gbp'].map((p) => {
+                  const pub = selectedPost.publishedPlatforms.includes(p);
+                  return (
+                    <span key={p} className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${pub ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
+                      {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Meta */}
+            {(selectedPost.keywords?.length || selectedPost.targetAudience) && (
+              <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-4 text-xs flex-shrink-0">
+                {selectedPost.keywords?.length ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-400 font-bold">キーワード：</span>
+                    {selectedPost.keywords.map((k) => (
+                      <span key={k} className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{k}</span>
+                    ))}
+                  </div>
+                ) : null}
+                {selectedPost.targetAudience && (
+                  <div><span className="text-slate-400 font-bold">ターゲット：</span>{selectedPost.targetAudience}</div>
+                )}
+              </div>
+            )}
+
+            {/* Content grid */}
+            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-3 gap-4">
+              {/* Instagram */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-white flex items-center gap-2">
+                  <Instagram size={12} style={{ color: '#E1306C' }} />
+                  <span className="text-xs font-bold text-slate-700">Instagram</span>
+                  {selectedPost.publishedPlatforms.includes('instagram') && <CheckCircle size={11} className="ml-auto text-green-500" />}
+                </div>
+                <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
+                  {selectedPost.instagramImageUrl && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={selectedPost.instagramImageUrl} alt="" className="w-full aspect-square object-cover rounded-lg mb-3 border border-slate-200" />
+                  )}
+                  {selectedPost.instagramCaption
+                    ? <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{selectedPost.instagramCaption}</p>
+                    : <p className="text-xs text-slate-400 italic">コンテンツなし</p>}
+                </div>
+              </div>
+
+              {/* Blog */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-white flex items-center gap-2">
+                  <FileText size={12} className="text-blue-500" />
+                  <span className="text-xs font-bold text-slate-700">ブログ記事</span>
+                  {selectedPost.publishedPlatforms.includes('blog') && <CheckCircle size={11} className="ml-auto text-green-500" />}
+                </div>
+                <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
+                  {selectedPost.blogTitle && <p className="text-sm font-black text-slate-800 mb-2">{selectedPost.blogTitle}</p>}
+                  {selectedPost.blogSlug && <p className="text-[10px] font-mono text-slate-400 mb-2">/{selectedPost.blogSlug}</p>}
+                  {selectedPost.blogBodyHtml
+                    ? <div className="text-xs text-slate-600 leading-relaxed prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedPost.blogBodyHtml }} />
+                    : <p className="text-xs text-slate-400 italic">コンテンツなし</p>}
+                </div>
+              </div>
+
+              {/* GBP */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-white flex items-center gap-2">
+                  <Globe size={12} className="text-green-500" />
+                  <span className="text-xs font-bold text-slate-700">GBP最新情報</span>
+                  {selectedPost.publishedPlatforms.includes('gbp') && <CheckCircle size={11} className="ml-auto text-green-500" />}
+                </div>
+                <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
+                  {selectedPost.gbpSummary
+                    ? <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{selectedPost.gbpSummary}</p>
+                    : <p className="text-xs text-slate-400 italic">コンテンツなし</p>}
+                  {selectedPost.gbpCallToAction && (
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400">CTA</span>
+                      <p className="text-xs font-bold text-blue-600 mt-0.5">{selectedPost.gbpCallToAction}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Error log */}
+            {selectedPost.errorLog && (
+              <div className="px-6 pb-4 flex-shrink-0">
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <p className="text-xs font-bold text-red-700 mb-1 flex items-center gap-1">
+                    <AlertCircle size={12} />エラーログ
+                  </p>
+                  <p className="text-[11px] text-red-600 font-mono whitespace-pre-wrap">{selectedPost.errorLog}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ─── RIGHT SETTINGS PANEL ──────────────────────────────────────────── */}
       <aside className="w-72 bg-white border-l border-slate-200 flex flex-col h-full flex-shrink-0 overflow-y-auto custom-scrollbar">
