@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { parseSessionValue, SESSION_COOKIE_NAME, isExpired } from '../../../../lib/auth-session';
 import { getSettingsByPaletteId, upsertSettings } from '../../_lib/pal-opt-store';
+import { hasPalStudioStandard } from '../../_lib/pal-opt-accounts';
 
 const isAdmin = async (): Promise<boolean> => {
   const store = await cookies();
@@ -22,8 +23,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ success: false, error: 'paletteId が必要です。' }, { status: 400 });
     }
 
-    const settings = await getSettingsByPaletteId(paletteId);
-    return NextResponse.json({ success: true, settings });
+    const [settings, hasPalStudio] = await Promise.all([
+      getSettingsByPaletteId(paletteId),
+      hasPalStudioStandard(paletteId).catch(() => false),
+    ]);
+    return NextResponse.json({ success: true, settings, hasPalStudioDetected: hasPalStudio });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '設定の取得に失敗しました。';
     return NextResponse.json({ success: false, error: message }, { status: 500 });

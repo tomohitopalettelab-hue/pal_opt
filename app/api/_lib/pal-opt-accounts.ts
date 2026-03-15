@@ -34,6 +34,11 @@ const isPalOptStandardPlanCode = (code: string): boolean => {
   return normalized === 'pal_opt_standard';
 };
 
+const isPalStudioPlanCode = (code: string): boolean => {
+  const normalized = normalize(code).replace(/-/g, '_');
+  return normalized === 'pal_studio_standard' || normalized === 'pal_studio_lite' || normalized === 'pal_studio';
+};
+
 const todayYmd = (): string => {
   const now = new Date();
   const y = now.getFullYear();
@@ -108,6 +113,46 @@ export const findPalOptAccountByPaletteId = async (paletteId: string): Promise<P
   if (!target) return null;
   const accounts = await listPalOptAccountsFromPalDb();
   return accounts.find((account) => String(account.paletteId || '').trim().toUpperCase() === target) || null;
+};
+
+/** pal_studio standard plan を保持しているかチェック */
+export const hasPalStudioStandard = async (paletteId: string): Promise<boolean> => {
+  const target = String(paletteId || '').trim().toUpperCase();
+  if (!target) return false;
+
+  const activeOn = todayYmd();
+  const [accountsRes, contractsRes, plansRes] = await Promise.all([
+    palDbGet('/api/accounts'),
+    palDbGet(`/api/contracts?activeOn=${encodeURIComponent(activeOn)}`),
+    palDbGet('/api/plans?includeInactive=1'),
+  ]);
+
+  if (!accountsRes.ok || !contractsRes.ok || !plansRes.ok) return false;
+
+  const accountsBody = await accountsRes.json().catch(() => ({}));
+  const contractsBody = await contractsRes.json().catch(() => ({}));
+  const plansBody = await plansRes.json().catch(() => ({}));
+
+  const accounts: PalDbAccount[] = Array.isArray(accountsBody?.accounts) ? accountsBody.accounts : [];
+  const contracts: ContractItem[] = Array.isArray(contractsBody?.contracts) ? contractsBody.contracts : [];
+  const plans: PlanItem[] = Array.isArray(plansBody?.plans) ? plansBody.plans : [];
+
+  const account = accounts.find((item) => String(item.paletteId || '').trim().toUpperCase() === target);
+  if (!account) return false;
+
+  const studioPlanIds = new Set(
+    plans
+      .filter((plan) => isPalStudioPlanCode(plan.code))
+      .map((plan) => String(plan.id || '').trim())
+      .filter(Boolean),
+  );
+
+  return contracts.some((item) => {
+    return (
+      String(item.accountId || '').trim() === String(account.id || '').trim() &&
+      studioPlanIds.has(String(item.planId || '').trim())
+    );
+  });
 };
 
 export const canLoginPalOptByPaletteId = async (paletteId: string): Promise<boolean> => {
