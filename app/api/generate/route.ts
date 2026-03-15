@@ -1,36 +1,23 @@
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { parseSessionValue, MAIN_SESSION_COOKIE_NAME, isExpired } from '../../../lib/auth-session';
-import { getSettingsByPaletteId } from '../_lib/pal-opt-store';
-import { updatePost } from '../_lib/pal-opt-store';
+import { getSettingsByPaletteId, updatePost } from '../_lib/pal-opt-store';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const getErrorCode = (error: unknown): number | null => {
-  const code = (error as Record<string, unknown>)?.status || (error as Record<string, unknown>)?.code;
-  const normalized = Number(code);
-  return Number.isFinite(normalized) ? normalized : null;
-};
-
 const isRetryableError = (error: unknown): boolean => {
-  const code = getErrorCode(error);
-  if (code === 429 || code === 500 || code === 503 || code === 504) return true;
+  const status = (error as Record<string, unknown>)?.status as number | undefined;
+  if (status === 429 || status === 500 || status === 503) return true;
   const message = String((error as Record<string, unknown>)?.message || '').toLowerCase();
-  return (
-    message.includes('high demand') ||
-    message.includes('unavailable') ||
-    message.includes('temporarily') ||
-    message.includes('timeout') ||
-    message.includes('rate limit')
-  );
+  return message.includes('rate limit') || message.includes('overloaded') || message.includes('timeout');
 };
 
 const extractErrorMessage = (error: unknown): string => {
-  const code = getErrorCode(error);
-  const raw = String((error as Record<string, unknown>)?.message || 'Unknown generation error');
+  const status = (error as Record<string, unknown>)?.status;
+  const raw = String((error as Record<string, unknown>)?.message || '不明なエラー');
   const compact = raw.replace(/\s+/g, ' ').trim();
-  return code ? `[${code}] ${compact}` : compact;
+  return status ? `[${status}] ${compact}` : compact;
 };
 
 type GenerateBody = {
@@ -52,14 +39,9 @@ export async function POST(req: Request) {
     }
 
     const paletteId = session.customerId || '';
-    const apiKey =
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY ||
-      '';
-
+    const apiKey = process.env.OPENAI_KEY_API || process.env.OPENAI_API_KEY || '';
     if (!apiKey) {
-      return NextResponse.json({ success: false, error: 'Gemini APIキーが設定されていません。' }, { status: 500 });
+      return NextResponse.json({ success: false, error: 'OpenAI APIキーが設定されていません。' }, { status: 500 });
     }
 
     const body = (await req.json()) as GenerateBody;
@@ -89,7 +71,7 @@ export async function POST(req: Request) {
 【pal_studio連携】
 この顧客はWebサイト（pal_studio）を運用しています。
 ブログ記事はWebサイトへの流入を意識し、内部リンクや関連ページへの誘導を含めてください。
-HTML記事はal本文構造で、h2/h3見出し、p段落、強調などを適切に使用してください。`;
+HTML記事は本文構造で、h2/h3見出し、p段落、強調などを適切に使用してください。`;
     }
     if (settings?.hasPalTrust) {
       contextAddendum += `
@@ -132,37 +114,30 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
   }
 }`;
 
-    const ai = new GoogleGenAI({ apiKey });
-
-    const models = (
-      process.env.GENERATE_MODEL_LIST ||
-      'gemini-2.5-flash,gemini-2.5-flash-lite'
-    )
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean);
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const openai = new OpenAI({ apiKey });
 
     let responseText: string | null = null;
     let lastError: unknown = null;
 
-    for (const mdl of models) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const result = await ai.models.generateContent({
-            model: mdl,
-            config: { systemInstruction: systemPrompt },
-            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          });
-          responseText = String((result as unknown as Record<string, unknown>).text || '');
-          lastError = null;
-          break;
-        } catch (error) {
-          lastError = error;
-          if (!isRetryableError(error) || attempt === 2) break;
-          await sleep(250 * attempt);
-        }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const completion = await openai.chat.completions.create({
+          model,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        });
+        responseText = completion.choices[0]?.message?.content || '';
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableError(error) || attempt === 3) break;
+        await sleep(500 * attempt);
       }
-      if (responseText) break;
     }
 
     if (!responseText) {
@@ -222,7 +197,7 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
       },
     });
   } catch (error: unknown) {
-    console.error('--- pal_opt generate error ---', error);
+    console.error('--- pal_opt generate エラー ---', error);
     return NextResponse.json(
       { success: false, error: `生成エラー: ${extractErrorMessage(error)}` },
       { status: 500 },
