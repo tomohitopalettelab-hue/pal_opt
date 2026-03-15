@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Users, Settings, Instagram, Globe, FileText, Save, LogOut,
   ChevronRight, CheckCircle, Clock, AlertCircle, Tag, Plus, X,
-  BarChart3, Calendar, ArrowLeft,
+  BarChart3, Calendar, ArrowLeft, Link2, RefreshCw,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -109,6 +109,15 @@ export default function AdminPage() {
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // OAuth関連ステート
+  type OAuthToast = { type: 'success' | 'error'; message: string } | null;
+  const [oauthToast, setOauthToast] = useState<OAuthToast>(null);
+  type IgAccount = { igId: string; igName: string; pageId: string; pageName: string };
+  type GbpLocation = { id: string; name: string; address: string };
+  const [igSelectAccounts, setIgSelectAccounts] = useState<IgAccount[]>([]);
+  const [gbpSelectLocations, setGbpSelectLocations] = useState<GbpLocation[]>([]);
+  const [oauthPaletteId, setOauthPaletteId] = useState('');
+
   // Load accounts
   useEffect(() => {
     (async () => {
@@ -166,6 +175,63 @@ export default function AdminPage() {
       setIsLoadingSettings(false);
     }
   }, []);
+
+  // OAuth コールバック結果をURLパラメータから読み取る
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const p = new URLSearchParams(window.location.search);
+    const pid = p.get('paletteId') || '';
+
+    const showToast = (type: 'success' | 'error', message: string) => {
+      setOauthToast({ type, message });
+      setTimeout(() => setOauthToast(null), 5000);
+    };
+
+    if (p.get('ig_connected')) {
+      const user = p.get('ig_user') ? `（@${p.get('ig_user')}）` : '';
+      showToast('success', `Instagram連携が完了しました${user}`);
+      if (pid) setOauthPaletteId(pid);
+    } else if (p.get('ig_error')) {
+      showToast('error', `Instagram連携エラー: ${decodeURIComponent(p.get('ig_error') || '')}`);
+    } else if (p.get('ig_select')) {
+      const raw = p.get('accounts') || '';
+      try {
+        const list: IgAccount[] = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
+        setIgSelectAccounts(list);
+        if (pid) setOauthPaletteId(pid);
+      } catch { showToast('error', 'アカウント選択データの解析に失敗しました。'); }
+    }
+
+    if (p.get('gbp_connected')) {
+      const name = p.get('gbp_name') ? `（${decodeURIComponent(p.get('gbp_name') || '')}）` : '';
+      showToast('success', `Google Business Profile連携が完了しました${name}`);
+      if (pid) setOauthPaletteId(pid);
+    } else if (p.get('gbp_error')) {
+      showToast('error', `GBP連携エラー: ${decodeURIComponent(p.get('gbp_error') || '')}`);
+    } else if (p.get('gbp_select')) {
+      const raw = p.get('locations') || '';
+      try {
+        const list: GbpLocation[] = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
+        setGbpSelectLocations(list);
+        if (pid) setOauthPaletteId(pid);
+      } catch { showToast('error', 'ロケーション選択データの解析に失敗しました。'); }
+    }
+
+    // クリーンURL（履歴に残さない）
+    if (p.toString()) window.history.replaceState({}, '', '/admin');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // OAuth完了後にアカウントが自動選択されたら設定を再読み込み
+  useEffect(() => {
+    if (!oauthPaletteId || accounts.length === 0) return;
+    const target = accounts.find((a) => a.paletteId === oauthPaletteId);
+    if (target) {
+      setSelectedAccount(target);
+      loadSettings(target.paletteId);
+      setOauthPaletteId('');
+    }
+  }, [oauthPaletteId, accounts, loadSettings]);
 
   const handleSelectAccount = (account: Account) => {
     setSelectedAccount(account);
@@ -228,6 +294,93 @@ export default function AdminPage() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#F5F0F4] text-slate-800">
+
+      {/* ─── OAuth トースト通知 ────────────────────────────────────────────── */}
+      {oauthToast && (
+        <div className={`fixed top-4 right-4 z-50 flex items-start gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-sm ${oauthToast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+          {oauthToast.type === 'success' ? <CheckCircle size={16} className="shrink-0 mt-0.5" /> : <AlertCircle size={16} className="shrink-0 mt-0.5" />}
+          <span>{oauthToast.message}</span>
+          <button onClick={() => setOauthToast(null)} className="ml-2 opacity-70 hover:opacity-100"><X size={14} /></button>
+        </div>
+      )}
+
+      {/* ─── Instagram アカウント選択モーダル ──────────────────────────────── */}
+      {igSelectAccounts.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4">
+            <p className="font-bold text-slate-800 flex items-center gap-2"><Instagram size={16} style={{ color: '#E1306C' }} />Instagramアカウントを選択</p>
+            <p className="text-xs text-slate-500">複数のInstagramビジネスアカウントが見つかりました。使用するアカウントを選択してください。</p>
+            <div className="space-y-2">
+              {igSelectAccounts.map((acc) => (
+                <button
+                  key={acc.igId}
+                  onClick={async () => {
+                    const res = await fetch('/api/oauth/instagram/select', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ igId: acc.igId, igName: acc.igName, paletteId: oauthPaletteId }),
+                    });
+                    const d = await res.json();
+                    setIgSelectAccounts([]);
+                    if (d.success) {
+                      setOauthToast({ type: 'success', message: `Instagram連携完了（@${acc.igName}）` });
+                      setTimeout(() => setOauthToast(null), 4000);
+                      if (oauthPaletteId) loadSettings(oauthPaletteId);
+                    } else {
+                      setOauthToast({ type: 'error', message: d.error || '保存に失敗しました。' });
+                      setTimeout(() => setOauthToast(null), 5000);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-200 hover:border-pink-400 hover:bg-pink-50 transition-colors text-sm"
+                >
+                  <p className="font-bold text-slate-800">@{acc.igName}</p>
+                  <p className="text-[10px] text-slate-400">{acc.pageName} (ID: {acc.igId})</p>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setIgSelectAccounts([])} className="w-full text-xs text-slate-400 hover:text-slate-600">キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── GBP ロケーション選択モーダル ──────────────────────────────────── */}
+      {gbpSelectLocations.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4">
+            <p className="font-bold text-slate-800 flex items-center gap-2"><Globe size={16} className="text-blue-500" />ロケーションを選択</p>
+            <p className="text-xs text-slate-500">複数のGBPロケーションが見つかりました。使用するロケーションを選択してください。</p>
+            <div className="space-y-2">
+              {gbpSelectLocations.map((loc) => (
+                <button
+                  key={loc.id}
+                  onClick={async () => {
+                    const res = await fetch('/api/oauth/gbp/select', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ locationId: loc.id, locationName: loc.name, paletteId: oauthPaletteId }),
+                    });
+                    const d = await res.json();
+                    setGbpSelectLocations([]);
+                    if (d.success) {
+                      setOauthToast({ type: 'success', message: `GBP連携完了（${loc.name}）` });
+                      setTimeout(() => setOauthToast(null), 4000);
+                      if (oauthPaletteId) loadSettings(oauthPaletteId);
+                    } else {
+                      setOauthToast({ type: 'error', message: d.error || '保存に失敗しました。' });
+                      setTimeout(() => setOauthToast(null), 5000);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50 transition-colors text-sm"
+                >
+                  <p className="font-bold text-slate-800">{loc.name}</p>
+                  {loc.address && <p className="text-[10px] text-slate-400">{loc.address}</p>}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setGbpSelectLocations([])} className="w-full text-xs text-slate-400 hover:text-slate-600">キャンセル</button>
+          </div>
+        </div>
+      )}
 
       {/* ─── LEFT SIDEBAR ──────────────────────────────────────────────────── */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-full flex-shrink-0">
@@ -552,56 +705,116 @@ export default function AdminPage() {
             <div className="space-y-2">
               <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
                 <Instagram size={12} style={{ color: ACCENT }} />Instagram API
+                {settings.igAccessToken && settings.igBusinessAccountId && (
+                  <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">
+                    <CheckCircle size={9} />接続済み
+                  </span>
+                )}
               </p>
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">アクセストークン</label>
-                  <input
-                    type="password"
-                    value={settings.igAccessToken}
-                    onChange={(e) => setSettings((s) => ({ ...s, igAccessToken: e.target.value }))}
-                    placeholder="EAA..."
-                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
-                  />
+              {/* OAuthで接続 */}
+              <a
+                href={`/api/oauth/instagram?paletteId=${encodeURIComponent(selectedAccount?.paletteId || '')}`}
+                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
+                style={{ backgroundColor: '#E1306C' }}
+              >
+                <Link2 size={11} />
+                {settings.igAccessToken && settings.igBusinessAccountId ? 'Instagramを再接続' : 'Instagramと接続（OAuth）'}
+              </a>
+              {/* 手動入力（上書き用） */}
+              <details className="text-[10px]">
+                <summary className="cursor-pointer text-slate-400 select-none">手動入力（上書き）</summary>
+                <div className="space-y-2 mt-2">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">アクセストークン</label>
+                    <input
+                      type="password"
+                      value={settings.igAccessToken}
+                      onChange={(e) => setSettings((s) => ({ ...s, igAccessToken: e.target.value }))}
+                      placeholder="EAA..."
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">ビジネスアカウントID</label>
+                    <input
+                      value={settings.igBusinessAccountId}
+                      onChange={(e) => setSettings((s) => ({ ...s, igBusinessAccountId: e.target.value }))}
+                      placeholder="1234567890"
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">ビジネスアカウントID</label>
-                  <input
-                    value={settings.igBusinessAccountId}
-                    onChange={(e) => setSettings((s) => ({ ...s, igBusinessAccountId: e.target.value }))}
-                    placeholder="1234567890"
-                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
-                  />
-                </div>
-              </div>
+              </details>
             </div>
 
             {/* GBP */}
             <div className="space-y-2">
               <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
                 <Globe size={12} className="text-blue-500" />Google Business Profile
+                {settings.gbpAccessToken && settings.gbpLocationId && (
+                  <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">
+                    <CheckCircle size={9} />接続済み
+                  </span>
+                )}
               </p>
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">アクセストークン</label>
-                  <input
-                    type="password"
-                    value={settings.gbpAccessToken}
-                    onChange={(e) => setSettings((s) => ({ ...s, gbpAccessToken: e.target.value }))}
-                    placeholder="ya29..."
-                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
-                  />
+              {/* OAuthで接続 */}
+              <a
+                href={`/api/oauth/gbp?paletteId=${encodeURIComponent(selectedAccount?.paletteId || '')}`}
+                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80 bg-blue-500"
+              >
+                <Link2 size={11} />
+                {settings.gbpAccessToken && settings.gbpLocationId ? 'Googleを再接続' : 'Googleと接続（OAuth）'}
+              </a>
+              {/* リフレッシュトークンがある場合はトークン更新ボタン */}
+              {settings.gbpRefreshToken && (
+                <button
+                  onClick={async () => {
+                    if (!selectedAccount) return;
+                    const res = await fetch('/api/oauth/gbp/refresh', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ paletteId: selectedAccount.paletteId }),
+                    });
+                    const d = await res.json();
+                    if (d.success) {
+                      setSettings((s) => ({ ...s, gbpAccessToken: d.accessToken }));
+                      setOauthToast({ type: 'success', message: 'GBPアクセストークンを更新しました。' });
+                      setTimeout(() => setOauthToast(null), 4000);
+                    } else {
+                      setOauthToast({ type: 'error', message: d.error || 'トークン更新に失敗しました。' });
+                      setTimeout(() => setOauthToast(null), 5000);
+                    }
+                  }}
+                  className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-bold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-colors"
+                >
+                  <RefreshCw size={11} />アクセストークンを更新
+                </button>
+              )}
+              {/* 手動入力（上書き用） */}
+              <details className="text-[10px]">
+                <summary className="cursor-pointer text-slate-400 select-none">手動入力（上書き）</summary>
+                <div className="space-y-2 mt-2">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">アクセストークン</label>
+                    <input
+                      type="password"
+                      value={settings.gbpAccessToken}
+                      onChange={(e) => setSettings((s) => ({ ...s, gbpAccessToken: e.target.value }))}
+                      placeholder="ya29..."
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">ロケーションID</label>
+                    <input
+                      value={settings.gbpLocationId}
+                      onChange={(e) => setSettings((s) => ({ ...s, gbpLocationId: e.target.value }))}
+                      placeholder="accounts/.../locations/..."
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] text-slate-400 mb-1">ロケーションID</label>
-                  <input
-                    value={settings.gbpLocationId}
-                    onChange={(e) => setSettings((s) => ({ ...s, gbpLocationId: e.target.value }))}
-                    placeholder="accounts/.../locations/..."
-                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
-                  />
-                </div>
-              </div>
+              </details>
             </div>
 
             {/* Blog */}
