@@ -30,9 +30,10 @@ export async function GET(req: Request) {
 
   const scope = [
     'pages_show_list',
+    'pages_read_engagement',
+    'business_management',
     'instagram_basic',
     'instagram_content_publish',
-    'pages_read_engagement',
   ].join(',');
 
   const url = new URL('https://www.facebook.com/v19.0/dialog/oauth');

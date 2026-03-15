@@ -83,9 +83,11 @@ export async function GET(req: Request) {
       }));
 
     if (igAccounts.length === 0) {
+      // デバッグ：どのページが取得できているか表示
+      const pageNames = pages.map((p) => `${p.name}(id:${p.id}, ig:${p.instagram_business_account ? '✓' : '✗'})`).join(' / ');
       throw new Error(
-        'Instagramビジネスアカウントが見つかりません。' +
-          'FacebookページにInstagramプロアカウントを連携してください。'
+        `Instagramビジネスアカウントが見つかりません。取得したFBページ: [${pageNames || 'ページなし'}] ` +
+          '— FacebookページにInstagramプロアカウントを連携してください。'
       );
     }
 

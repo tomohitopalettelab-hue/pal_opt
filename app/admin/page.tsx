@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Users, Settings, Instagram, Globe, FileText, Save, LogOut,
   ChevronRight, CheckCircle, Clock, AlertCircle, Tag, Plus, X,
-  BarChart3, Calendar, ArrowLeft, Link2, RefreshCw,
+  BarChart3, Calendar, ArrowLeft, Link2, RefreshCw, Circle, ClipboardList,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -701,6 +701,39 @@ export default function AdminPage() {
               <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-600">{error}</div>
             )}
 
+            {/* ── セットアップ状況サマリー ────────────────────────── */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1 mb-2">
+                <ClipboardList size={10} />セットアップ状況
+              </p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <Instagram size={11} style={{ color: '#E1306C' }} />Instagram
+                  </span>
+                  {settings.igAccessToken && settings.igBusinessAccountId
+                    ? <span className="flex items-center gap-1 text-[10px] font-bold text-green-600"><CheckCircle size={10} />接続済み</span>
+                    : <span className="flex items-center gap-1 text-[10px] text-slate-400"><Circle size={10} />未接続</span>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <Globe size={11} className="text-blue-500" />Google Business
+                  </span>
+                  {settings.gbpAccessToken && settings.gbpLocationId
+                    ? <span className="flex items-center gap-1 text-[10px] font-bold text-green-600"><CheckCircle size={10} />接続済み</span>
+                    : <span className="flex items-center gap-1 text-[10px] text-slate-400"><Circle size={10} />未接続</span>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <FileText size={11} className="text-green-500" />ブログ
+                  </span>
+                  {settings.blogUrl && settings.blogApiKey
+                    ? <span className="flex items-center gap-1 text-[10px] font-bold text-green-600"><CheckCircle size={10} />設定済み</span>
+                    : <span className="flex items-center gap-1 text-[10px] text-slate-400"><Circle size={10} />未設定</span>}
+                </div>
+              </div>
+            </div>
+
             {/* Instagram */}
             <div className="space-y-2">
               <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
@@ -714,12 +747,17 @@ export default function AdminPage() {
               {/* OAuthで接続 */}
               <a
                 href={`/api/oauth/instagram?paletteId=${encodeURIComponent(selectedAccount?.paletteId || '')}`}
-                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
+                className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
                 style={{ backgroundColor: '#E1306C' }}
               >
                 <Link2 size={11} />
                 {settings.igAccessToken && settings.igBusinessAccountId ? 'Instagramを再接続' : 'Instagramと接続（OAuth）'}
               </a>
+              <div className="bg-pink-50 border border-pink-100 rounded-lg px-2.5 py-2 text-[10px] text-pink-700 space-y-0.5 leading-relaxed">
+                <p className="font-bold">📋 接続前の確認</p>
+                <p>・お客さんのFacebookページ管理者を<br/>　自分のFBアカウントに追加してもらう</p>
+                <p>・Instagram Professional アカウントが<br/>　そのFBページに紐づいていること</p>
+              </div>
               {/* 手動入力（上書き用） */}
               <details className="text-[10px]">
                 <summary className="cursor-pointer text-slate-400 select-none">手動入力（上書き）</summary>
@@ -760,11 +798,16 @@ export default function AdminPage() {
               {/* OAuthで接続 */}
               <a
                 href={`/api/oauth/gbp?paletteId=${encodeURIComponent(selectedAccount?.paletteId || '')}`}
-                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80 bg-blue-500"
+                className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80 bg-blue-500"
               >
                 <Link2 size={11} />
                 {settings.gbpAccessToken && settings.gbpLocationId ? 'Googleを再接続' : 'Googleと接続（OAuth）'}
               </a>
+              <div className="bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2 text-[10px] text-blue-700 space-y-0.5 leading-relaxed">
+                <p className="font-bold">📋 接続前の確認</p>
+                <p>・お客さんのGBPに自分のGoogleアカウントを<br/>　「管理者」として招待してもらう</p>
+                <p>・招待受諾後にこのボタンで接続する</p>
+              </div>
               {/* リフレッシュトークンがある場合はトークン更新ボタン */}
               {settings.gbpRefreshToken && (
                 <button
