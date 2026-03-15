@@ -27,6 +27,8 @@ type GenerateBody = {
   keywords: string[];
   targetAudience?: string;
   imageUrls?: string[];
+  tone?: string;
+  contentLength?: 'short' | 'default' | 'long';
 };
 
 export async function POST(req: Request) {
@@ -51,6 +53,7 @@ export async function POST(req: Request) {
     const keywords = Array.isArray(body.keywords) ? body.keywords : [];
     const targetAudience = String(body.targetAudience || '');
     const imageUrls = Array.isArray(body.imageUrls) ? body.imageUrls : [];
+    const contentLength = body.contentLength || 'default';
 
     if (!title && !topic) {
       return NextResponse.json({ success: false, error: 'タイトルまたはトピックを入力してください。' }, { status: 400 });
@@ -63,7 +66,29 @@ export async function POST(req: Request) {
       casual: 'カジュアルで親しみやすい',
       friendly: 'フレンドリーで温かみのある',
     };
-    const toneLabel = toneMap[settings?.defaultTone || 'professional'] || 'プロフェッショナルで信頼感のある';
+    // フロントからの指定を優先、なければ設定のデフォルト値を使用
+    const resolvedTone = body.tone || settings?.defaultTone || 'professional';
+    const toneLabel = toneMap[resolvedTone] || 'プロフェッショナルで信頼感のある';
+
+    // コンテンツ長の指定
+    const lengthMap = {
+      short: {
+        instagram: '300〜500文字（簡潔にまとめ、ハッシュタグは5〜8個）',
+        blog: '400〜700文字相当のHTML（要点を絞った短い記事）',
+        gbp: '100〜200文字（一言でポイントを伝える）',
+      },
+      default: {
+        instagram: '最大2200文字（改行あり、ハッシュタグを末尾に配置）',
+        blog: '1500〜2000文字相当のHTML（見出し・段落・強調を含む）',
+        gbp: '200〜1500文字（地域・サービス名を含む）',
+      },
+      long: {
+        instagram: '1000〜2200文字（詳細な説明と充実したハッシュタグ15〜30個）',
+        blog: '2500〜4000文字相当のHTML（詳細な解説・FAQ・まとめセクションを含む長文記事）',
+        gbp: '600〜1500文字（詳細な説明、特徴・強み・アクセスなどを含む）',
+      },
+    };
+    const lengthSpec = lengthMap[contentLength];
 
     let contextAddendum = '';
     if (settings?.hasPalStudio) {
@@ -99,17 +124,17 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
 以下のJSON形式で回答してください（コードブロック不要、JSONのみ）:
 {
   "instagram": {
-    "caption": "Instagram投稿文（最大2200文字、改行あり、ハッシュタグを末尾に配置）",
+    "caption": "Instagram投稿文（${lengthSpec.instagram}）",
     "hashTags": ["#タグ1", "#タグ2", "#タグ3"]
   },
   "blog": {
     "title": "SEO最適化されたブログ記事タイトル（30〜60文字）",
-    "bodyHtml": "<article>...</article>（完全なHTML、見出し・段落・強調を含む、1500〜2000文字相当）",
+    "bodyHtml": "<article>...</article>（完全なHTML、${lengthSpec.blog}）",
     "metaDescription": "メタディスクリプション（120〜160文字）",
     "slug": "url-friendly-slug-in-japanese-romaji"
   },
   "gbp": {
-    "summary": "Googleビジネスプロフィールの最新情報テキスト（200〜1500文字、地域・サービス名を含む）",
+    "summary": "Googleビジネスプロフィールの最新情報テキスト（${lengthSpec.gbp}）",
     "callToAction": "ウェブサイトを見る"
   }
 }`;

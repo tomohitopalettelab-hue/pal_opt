@@ -363,6 +363,8 @@ export default function MainPage() {
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [newKeyword, setNewKeyword] = useState('');
   const [showMediaModal, setShowMediaModal] = useState(false);
+  const [tone, setTone] = useState<'professional' | 'casual' | 'friendly'>('professional');
+  const [contentLength, setContentLength] = useState<'short' | 'default' | 'long'>('default');
 
   // Generated content state
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
@@ -439,7 +441,7 @@ export default function MainPage() {
       const genRes = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId, title, topic, keywords, targetAudience, imageUrls }),
+        body: JSON.stringify({ postId, title, topic, keywords, targetAudience, imageUrls, tone, contentLength }),
       });
       const genData = await genRes.json();
 
@@ -557,6 +559,8 @@ export default function MainPage() {
     setCurrentPostId(null);
     setPublishState({ instagram: 'idle', blog: 'idle', gbp: 'idle' });
     setGenerateError('');
+    setTone('professional');
+    setContentLength('default');
     setAppState('idle');
   };
 
@@ -702,6 +706,52 @@ export default function MainPage() {
                 )}
               </div>
             </div>
+
+              {/* Tone selector */}
+              <div className="mb-3">
+                <label className="block text-[10px] font-bold text-slate-400 mb-1.5">トーン</label>
+                <div className="flex gap-1.5">
+                  {([
+                    { value: 'professional', label: 'プロ' },
+                    { value: 'casual',       label: 'カジュアル' },
+                    { value: 'friendly',     label: '親しみやすい' },
+                  ] as const).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      onClick={() => setTone(value)}
+                      className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border transition-all"
+                      style={tone === value
+                        ? { backgroundColor: ACCENT, color: '#fff', borderColor: ACCENT }
+                        : { backgroundColor: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Content length selector */}
+              <div className="mb-4">
+                <label className="block text-[10px] font-bold text-slate-400 mb-1.5">コンテンツの長さ</label>
+                <div className="flex gap-1.5">
+                  {([
+                    { value: 'short',   label: '短め' },
+                    { value: 'default', label: '標準' },
+                    { value: 'long',    label: '長め' },
+                  ] as const).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      onClick={() => setContentLength(value)}
+                      className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border transition-all"
+                      style={contentLength === value
+                        ? { backgroundColor: ACCENT, color: '#fff', borderColor: ACCENT }
+                        : { backgroundColor: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
             {generateError && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 text-xs text-red-600">

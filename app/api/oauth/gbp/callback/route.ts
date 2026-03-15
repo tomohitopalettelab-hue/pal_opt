@@ -61,10 +61,12 @@ export async function GET(req: Request) {
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const accountsData = await accountsRes.json();
+    console.log('[GBP Debug] accounts API status:', accountsRes.status, 'data:', JSON.stringify(accountsData));
     const accounts: any[] = accountsData.accounts || [];
 
     if (accounts.length === 0) {
-      throw new Error('Google ビジネスプロフィールのアカウントが見つかりません。GBPに登録されているGoogleアカウントでログインしてください。');
+      const detail = JSON.stringify(accountsData);
+      throw new Error(`Google ビジネスプロフィールのアカウントが見つかりません。GBPに登録されているGoogleアカウントでログインしてください。[API ${accountsRes.status}: ${detail}]`);
     }
 
     // ③ 各アカウントのロケーション一覧を取得
