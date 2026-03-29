@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { parseSessionValue, MAIN_SESSION_COOKIE_NAME, isExpired } from '../../../lib/auth-session';
 import { getPostById, getPostsByPaletteId, getSettingsByPaletteId, updatePost, type PalOptPost, type PalOptSettings } from '../_lib/pal-opt-store';
 
-type Platform = 'instagram' | 'blog' | 'gbp';
+type Platform = 'instagram' | 'blog' | 'gbp' | 'x';
 
 type PublishResult = {
   platform: Platform;
@@ -238,6 +238,40 @@ const publishToGBP = async (post: PalOptPost, settings: PalOptSettings): Promise
   }
 };
 
+// ── X (Twitter) ──────────────────────────────────────────────────────────────
+
+const publishToX = async (post: PalOptPost, settings: PalOptSettings): Promise<PublishResult> => {
+  const platform: Platform = 'x';
+  try {
+    const { xAccessToken } = settings;
+    if (!xAccessToken) {
+      return { platform, success: false, error: 'X API設定が不足しています。OAuthで連携してください。' };
+    }
+    if (!post.xText) {
+      return { platform, success: false, error: 'X投稿文がありません。' };
+    }
+
+    const res = await fetch('https://api.twitter.com/2/tweets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${xAccessToken}`,
+      },
+      body: JSON.stringify({ text: post.xText }),
+    });
+
+    const body = await res.json();
+
+    if (!res.ok || !body?.data?.id) {
+      return { platform, success: false, error: `X投稿失敗: ${body?.detail || body?.title || 'unknown'}` };
+    }
+
+    return { platform, success: true, postId: String(body.data.id) };
+  } catch (error: unknown) {
+    return { platform, success: false, error: error instanceof Error ? error.message : 'X投稿エラー' };
+  }
+};
+
 // ── Main Route ────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
@@ -252,7 +286,7 @@ export async function POST(req: Request) {
     const paletteId = session.customerId || '';
     const body = await req.json();
     const postId = String(body.postId || '').trim();
-    const platforms: Platform[] = Array.isArray(body.platforms) ? body.platforms : ['instagram', 'blog', 'gbp'];
+    const platforms: Platform[] = Array.isArray(body.platforms) ? body.platforms : ['instagram', 'blog', 'gbp', 'x'];
 
     if (!postId) {
       return NextResponse.json({ success: false, error: '投稿IDが必要です。' }, { status: 400 });
@@ -280,6 +314,7 @@ export async function POST(req: Request) {
     if (platforms.includes('instagram')) publishFns.push(publishToInstagram(post, settings));
     if (platforms.includes('blog')) publishFns.push(publishToBlog(post, settings));
     if (platforms.includes('gbp')) publishFns.push(publishToGBP(post, settings));
+    if (platforms.includes('x')) publishFns.push(publishToX(post, settings));
 
     const settled = await Promise.allSettled(publishFns);
     const results: PublishResult[] = settled.map((r) =>
@@ -299,6 +334,7 @@ export async function POST(req: Request) {
         if (result.platform === 'instagram' && result.postId) platformUpdates.instagramPostId = result.postId;
         if (result.platform === 'blog' && result.postId) platformUpdates.blogPostId = result.postId;
         if (result.platform === 'gbp' && result.postId) platformUpdates.gbpPostId = result.postId;
+        if (result.platform === 'x' && result.postId) platformUpdates.xPostId = result.postId;
       } else {
         hasError = true;
       }

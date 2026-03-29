@@ -5,6 +5,7 @@ import {
   Users, Settings, Instagram, Globe, FileText, Save, LogOut,
   ChevronRight, CheckCircle, Clock, AlertCircle, Tag, Plus, X,
   BarChart3, Calendar, ArrowLeft, Link2, RefreshCw, Circle, ClipboardList,
+  Shield, Bell, LayoutTemplate, Check, CircleX, Twitter, Trash2, Pencil,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -14,7 +15,6 @@ type Account = {
   paletteId: string;
   name: string;
   status: string;
-  isStandard?: boolean;
 };
 
 type Settings = {
@@ -23,6 +23,7 @@ type Settings = {
   gbpAccessToken: string;
   gbpRefreshToken: string;
   gbpLocationId: string;
+  xAccessToken: string;
   blogUrl: string;
   blogWpUsername: string;
   blogApiKey: string;
@@ -31,6 +32,19 @@ type Settings = {
   defaultTone: string;
   hasPalStudio: boolean;
   hasPalTrust: boolean;
+  notificationType: 'none' | 'email' | 'line';
+  notificationEmail: string;
+  lineUserId: string;
+};
+
+type Template = {
+  id?: string;
+  paletteId: string;
+  name: string;
+  category: string;
+  topic: string;
+  tone: string;
+  contentTemplate: string;
 };
 
 type Post = {
@@ -67,6 +81,7 @@ const emptySettings = (): Settings => ({
   gbpAccessToken: '',
   gbpRefreshToken: '',
   gbpLocationId: '',
+  xAccessToken: '',
   blogUrl: '',
   blogWpUsername: '',
   blogApiKey: '',
@@ -75,6 +90,9 @@ const emptySettings = (): Settings => ({
   defaultTone: 'professional',
   hasPalStudio: false,
   hasPalTrust: false,
+  notificationType: 'none',
+  notificationEmail: '',
+  lineUserId: '',
 });
 
 const statusBadge = (status: string) => {
@@ -83,6 +101,7 @@ const statusBadge = (status: string) => {
     preview: { label: 'プレビュー', color: 'bg-blue-50 text-blue-600', icon: <Clock size={10} /> },
     approved: { label: '承認済み', color: 'bg-yellow-50 text-yellow-700', icon: <CheckCircle size={10} /> },
     published: { label: '投稿済み', color: 'bg-green-50 text-green-700', icon: <CheckCircle size={10} /> },
+    pending_approval: { label: '承認待ち', color: 'bg-orange-50 text-orange-600', icon: <Clock size={10} /> },
     failed: { label: 'エラー', color: 'bg-red-50 text-red-600', icon: <AlertCircle size={10} /> },
   };
   const b = map[status] || map.draft;
@@ -107,6 +126,11 @@ export default function AdminPage() {
   const [newKeyword, setNewKeyword] = useState('');
   const [error, setError] = useState('');
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [activeTab, setActiveTab] = useState<'posts' | 'templates' | 'approval'>('posts');
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [isTemplateFormOpen, setIsTemplateFormOpen] = useState(false);
+  const [approvalReason, setApprovalReason] = useState('');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // OAuth関連ステート
@@ -154,6 +178,7 @@ export default function AdminPage() {
           gbpAccessToken: s.gbpAccessToken || '',
           gbpRefreshToken: s.gbpRefreshToken || '',
           gbpLocationId: s.gbpLocationId || '',
+          xAccessToken: s.xAccessToken || '',
           blogUrl: s.blogUrl || '',
           blogWpUsername: s.blogWpUsername || '',
           blogApiKey: s.blogApiKey || '',
@@ -162,10 +187,21 @@ export default function AdminPage() {
           defaultTone: s.defaultTone || 'professional',
           hasPalStudio: s.hasPalStudio || false,
           hasPalTrust: s.hasPalTrust || false,
+          notificationType: s.notificationType || 'none',
+          notificationEmail: s.notificationEmail || '',
+          lineUserId: s.lineUserId || '',
         });
       } else {
         setSettings(emptySettings());
       }
+
+      // Load templates
+      try {
+        const templatesRes = await fetch(`/api/admin/templates?paletteId=${encodeURIComponent(paletteId)}`);
+        const templatesData = await templatesRes.json();
+        if (templatesData.success) setTemplates(templatesData.templates || []);
+        else setTemplates([]);
+      } catch { setTemplates([]); }
 
       if (postsData.success) setPosts(postsData.posts || []);
       else setPosts([]);
@@ -217,6 +253,13 @@ export default function AdminPage() {
       } catch { showToast('error', 'ロケーション選択データの解析に失敗しました。'); }
     }
 
+    if (p.get('x_connected')) {
+      showToast('success', 'X (Twitter) 連携が完了しました');
+      if (pid) setOauthPaletteId(pid);
+    } else if (p.get('x_error')) {
+      showToast('error', `X連携エラー: ${decodeURIComponent(p.get('x_error') || '')}`);
+    }
+
     // クリーンURL（履歴に残さない）
     if (p.toString()) window.history.replaceState({}, '', '/admin');
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,6 +280,9 @@ export default function AdminPage() {
     setSelectedAccount(account);
     setSaveStatus('idle');
     setSelectedPost(null);
+    setActiveTab('posts');
+    setEditingTemplate(null);
+    setIsTemplateFormOpen(false);
     loadSettings(account.paletteId);
   };
 
@@ -279,6 +325,59 @@ export default function AdminPage() {
   const removeKeyword = (kw: string) => {
     setSettings((s) => ({ ...s, targetKeywords: s.targetKeywords.filter((k) => k !== kw) }));
   };
+
+  // Template handlers
+  const handleSaveTemplate = async (template: Template) => {
+    if (!selectedAccount) return;
+    const isEdit = !!template.id;
+    const url = isEdit ? '/api/admin/templates' : '/api/admin/templates';
+    const res = await fetch(url, {
+      method: isEdit ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...template, paletteId: selectedAccount.paletteId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadSettings(selectedAccount.paletteId);
+      setEditingTemplate(null);
+      setIsTemplateFormOpen(false);
+    } else {
+      setError(data.error || 'テンプレートの保存に失敗しました。');
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!selectedAccount) return;
+    const res = await fetch('/api/admin/templates', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: templateId, paletteId: selectedAccount.paletteId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadSettings(selectedAccount.paletteId);
+    } else {
+      setError(data.error || 'テンプレートの削除に失敗しました。');
+    }
+  };
+
+  // Approval handler
+  const handleApproval = async (postId: string, action: 'approve' | 'reject') => {
+    const res = await fetch('/api/admin/posts/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, action, reason: approvalReason }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setApprovalReason('');
+      if (selectedAccount) loadSettings(selectedAccount.paletteId);
+    } else {
+      setError(data.error || '承認処理に失敗しました。');
+    }
+  };
+
+  const pendingPosts = posts.filter((p) => p.status === 'pending_approval');
 
   const filteredAccounts = accounts.filter((a) =>
     !searchQuery || a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.paletteId.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -479,11 +578,6 @@ export default function AdminPage() {
                   <h2 className="text-lg font-black text-slate-800">{selectedAccount.name}</h2>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[11px] text-slate-400 font-mono">{selectedAccount.paletteId}</span>
-                    {selectedAccount.isStandard && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>
-                        Standard
-                      </span>
-                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -503,7 +597,28 @@ export default function AdminPage() {
               </div>
             </div>
 
+            {/* Tabs */}
+            <div className="flex gap-2">
+              {([
+                { key: 'posts' as const, label: '最近の投稿', icon: <BarChart3 size={12} /> },
+                { key: 'approval' as const, label: `承認待ち${pendingPosts.length > 0 ? ` (${pendingPosts.length})` : ''}`, icon: <Shield size={12} /> },
+                { key: 'templates' as const, label: 'テンプレート', icon: <LayoutTemplate size={12} /> },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-colors"
+                  style={activeTab === tab.key
+                    ? { backgroundColor: ACCENT, color: '#fff' }
+                    : { backgroundColor: '#fff', color: '#64748b', border: '1px solid #e2e8f0' }}
+                >
+                  {tab.icon}{tab.label}
+                </button>
+              ))}
+            </div>
+
             {/* Posts table */}
+            {activeTab === 'posts' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
               <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
                 <BarChart3 size={14} style={{ color: ACCENT }} />
@@ -549,6 +664,194 @@ export default function AdminPage() {
                 </div>
               )}
             </div>
+            )}
+
+            {/* Approval Queue */}
+            {activeTab === 'approval' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                <Shield size={14} style={{ color: ACCENT }} />
+                <p className="text-sm font-bold">承認待ち投稿</p>
+              </div>
+
+              {pendingPosts.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-400">承認待ちの投稿はありません</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {pendingPosts.map((post) => (
+                    <div key={post.id} className="px-5 py-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate">{post.title || '（タイトルなし）'}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Calendar size={10} className="text-slate-400" />
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(post.createdAt).toLocaleDateString('ja-JP')}
+                            </span>
+                            {statusBadge(post.status)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setSelectedPost(post)}
+                          className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-slate-500"
+                        >
+                          プレビュー
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={approvalReason}
+                          onChange={(e) => setApprovalReason(e.target.value)}
+                          placeholder="理由（任意）"
+                          className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                        />
+                        <button
+                          onClick={() => handleApproval(post.id, 'approve')}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
+                          style={{ backgroundColor: '#16a34a' }}
+                        >
+                          <Check size={11} />承認
+                        </button>
+                        <button
+                          onClick={() => handleApproval(post.id, 'reject')}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-500 transition-opacity hover:opacity-80"
+                        >
+                          <CircleX size={11} />却下
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            )}
+
+            {/* Templates */}
+            {activeTab === 'templates' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <LayoutTemplate size={14} style={{ color: ACCENT }} />
+                  <p className="text-sm font-bold">テンプレート</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setEditingTemplate({ paletteId: selectedAccount?.paletteId || '', name: '', category: '', topic: '', tone: 'professional', contentTemplate: '{}' });
+                    setIsTemplateFormOpen(true);
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
+                  style={{ backgroundColor: ACCENT }}
+                >
+                  <Plus size={11} />新規作成
+                </button>
+              </div>
+
+              {templates.length === 0 && !isTemplateFormOpen ? (
+                <div className="p-8 text-center text-xs text-slate-400">テンプレートがありません</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {templates.map((tpl) => (
+                    <div key={tpl.id} className="px-5 py-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate">{tpl.name}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {tpl.category && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ backgroundColor: ACCENT_LIGHT, color: ACCENT }}>{tpl.category}</span>}
+                          {tpl.topic && <span className="text-[10px] text-slate-400">{tpl.topic}</span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setEditingTemplate(tpl); setIsTemplateFormOpen(true); }}
+                        className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
+                        onClick={() => tpl.id && handleDeleteTemplate(tpl.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Template Form */}
+              {isTemplateFormOpen && editingTemplate && (
+                <div className="p-5 border-t border-slate-100 space-y-3">
+                  <p className="text-xs font-bold text-slate-500">{editingTemplate.id ? 'テンプレートを編集' : '新規テンプレート'}</p>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1">名前</label>
+                      <input
+                        value={editingTemplate.name}
+                        onChange={(e) => setEditingTemplate((t) => t ? { ...t, name: e.target.value } : t)}
+                        placeholder="テンプレート名"
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">カテゴリ</label>
+                        <input
+                          value={editingTemplate.category}
+                          onChange={(e) => setEditingTemplate((t) => t ? { ...t, category: e.target.value } : t)}
+                          placeholder="例：プロモーション"
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">トピック</label>
+                        <input
+                          value={editingTemplate.topic}
+                          onChange={(e) => setEditingTemplate((t) => t ? { ...t, topic: e.target.value } : t)}
+                          placeholder="例：新商品紹介"
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1">トーン</label>
+                      <select
+                        value={editingTemplate.tone}
+                        onChange={(e) => setEditingTemplate((t) => t ? { ...t, tone: e.target.value } : t)}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50"
+                      >
+                        <option value="professional">プロフェッショナル</option>
+                        <option value="casual">カジュアル</option>
+                        <option value="friendly">フレンドリー</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1">コンテンツテンプレート（JSON）</label>
+                      <textarea
+                        value={editingTemplate.contentTemplate}
+                        onChange={(e) => setEditingTemplate((t) => t ? { ...t, contentTemplate: e.target.value } : t)}
+                        placeholder='{"title": "{{title}}", "body": "{{body}}"}'
+                        rows={5}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white resize-none font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleSaveTemplate(editingTemplate)}
+                      className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80"
+                      style={{ backgroundColor: ACCENT }}
+                    >
+                      <Save size={11} />保存
+                    </button>
+                    <button
+                      onClick={() => { setIsTemplateFormOpen(false); setEditingTemplate(null); }}
+                      className="flex items-center gap-1 px-4 py-2 rounded-lg text-xs font-bold text-slate-500 border border-slate-200 hover:bg-slate-50 transition-colors"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            )}
           </div>
         )}
       </main>
@@ -725,6 +1028,14 @@ export default function AdminPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <Twitter size={11} className="text-slate-800" />X (Twitter)
+                  </span>
+                  {settings.xAccessToken
+                    ? <span className="flex items-center gap-1 text-[10px] font-bold text-green-600"><CheckCircle size={10} />接続済み</span>
+                    : <span className="flex items-center gap-1 text-[10px] text-slate-400"><Circle size={10} />未接続</span>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
                     <FileText size={11} className="text-green-500" />ブログ
                   </span>
                   {settings.blogUrl && settings.blogApiKey
@@ -860,6 +1171,25 @@ export default function AdminPage() {
               </details>
             </div>
 
+            {/* X (Twitter) */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
+                <Twitter size={12} className="text-slate-800" />X (Twitter)
+                {settings.xAccessToken && (
+                  <span className="ml-auto flex items-center gap-1 text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">
+                    <CheckCircle size={9} />接続済み
+                  </span>
+                )}
+              </p>
+              <a
+                href={`/api/oauth/x?paletteId=${encodeURIComponent(selectedAccount?.paletteId || '')}`}
+                className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-80 bg-slate-800"
+              >
+                <Link2 size={11} />
+                {settings.xAccessToken ? 'X (Twitter) を再接続' : 'X (Twitter) を接続'}
+              </a>
+            </div>
+
             {/* Blog */}
             <div className="space-y-2">
               <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
@@ -977,6 +1307,48 @@ export default function AdminPage() {
                 />
                 <span className="text-xs text-slate-600">pal_trust（口コミ連携）</span>
               </label>
+            </div>
+
+            {/* Notification Settings */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
+                <Bell size={12} style={{ color: ACCENT }} />通知設定
+              </p>
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-1">通知タイプ</label>
+                <select
+                  value={settings.notificationType}
+                  onChange={(e) => setSettings((s) => ({ ...s, notificationType: e.target.value as Settings['notificationType'] }))}
+                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50"
+                >
+                  <option value="none">なし</option>
+                  <option value="email">メール</option>
+                  <option value="line">LINE</option>
+                </select>
+              </div>
+              {settings.notificationType === 'email' && (
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">通知先メールアドレス</label>
+                  <input
+                    type="email"
+                    value={settings.notificationEmail}
+                    onChange={(e) => setSettings((s) => ({ ...s, notificationEmail: e.target.value }))}
+                    placeholder="example@example.com"
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                  />
+                </div>
+              )}
+              {settings.notificationType === 'line' && (
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">LINE ユーザーID</label>
+                  <input
+                    value={settings.lineUserId}
+                    onChange={(e) => setSettings((s) => ({ ...s, lineUserId: e.target.value }))}
+                    placeholder="U1234567890abcdef..."
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 focus:bg-white"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Save button */}

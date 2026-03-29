@@ -5,6 +5,7 @@ import {
   Sparkles, Instagram, FileText, Globe, X, Tag, Plus,
   CheckCircle, Clock, AlertCircle, Send, LogOut, ChevronDown,
   ChevronUp, Eye, Loader2, ChevronRight, ArrowLeft, ImageIcon,
+  Calendar, Wand2, Hash, LayoutTemplate, Layers,
 } from 'lucide-react';
 import { MediaModal } from './MediaModal';
 
@@ -12,6 +13,7 @@ import { MediaModal } from './MediaModal';
 
 type Post = {
   id: string;
+  paletteId?: string;
   title: string;
   topic?: string;
   keywords?: string[];
@@ -24,8 +26,20 @@ type Post = {
   blogTitle?: string | null;
   blogBodyHtml?: string | null;
   blogSlug?: string | null;
+  blogImageUrl?: string | null;
   gbpSummary?: string | null;
   gbpCallToAction?: string | null;
+  gbpImageUrl?: string | null;
+  xText?: string | null;
+  xImageUrl?: string | null;
+  xPostId?: string | null;
+  scheduledAt?: string | null;
+  templateId?: string | null;
+  planId?: string | null;
+  variationGroup?: string | null;
+  approvalNote?: string | null;
+  source?: string;
+  sourceType?: string | null;
   errorLog?: string | null;
   approvedAt?: string | null;
   publishedAt?: string | null;
@@ -33,10 +47,19 @@ type Post = {
   updatedAt: string;
 };
 
+type Template = {
+  id: string;
+  name: string;
+  topic: string;
+  tone?: string;
+  description?: string;
+};
+
 type GeneratedContent = {
   instagram: { caption: string; imageUrl: string | null };
   blog: { title: string; bodyHtml: string; metaDescription: string; slug: string };
   gbp: { summary: string; callToAction: string };
+  x?: { text: string };
 };
 
 type PlatformPublishState = 'idle' | 'publishing' | 'done' | 'error';
@@ -45,6 +68,7 @@ type PublishState = {
   instagram: PlatformPublishState;
   blog: PlatformPublishState;
   gbp: PlatformPublishState;
+  x: PlatformPublishState;
 };
 
 type AppState = 'login' | 'idle' | 'generating' | 'preview' | 'publishing' | 'detail';
@@ -140,20 +164,111 @@ function LoginPanel({ onLogin }: { onLogin: (paletteId: string) => void }) {
 
 const statusBadge = (status: string) => {
   const map: Record<string, { label: string; color: string }> = {
-    draft:     { label: '下書き',   color: 'bg-slate-100 text-slate-500' },
-    preview:   { label: 'プレビュー', color: 'bg-blue-50 text-blue-600' },
-    approved:  { label: '承認済み', color: 'bg-yellow-50 text-yellow-700' },
-    published: { label: '投稿済み', color: 'bg-green-50 text-green-700' },
-    failed:    { label: 'エラー',   color: 'bg-red-50 text-red-600' },
+    draft:            { label: '下書き',     color: 'bg-slate-100 text-slate-500' },
+    pending_approval: { label: '承認待ち',   color: 'bg-amber-50 text-amber-700' },
+    preview:          { label: 'プレビュー', color: 'bg-blue-50 text-blue-600' },
+    approved:         { label: '承認済み',   color: 'bg-yellow-50 text-yellow-700' },
+    scheduled:        { label: 'スケジュール済', color: 'bg-blue-50 text-blue-700' },
+    publishing:       { label: '投稿中',     color: 'bg-purple-50 text-purple-700' },
+    published:        { label: '投稿済み',   color: 'bg-green-50 text-green-700' },
+    failed:           { label: 'エラー',     color: 'bg-red-50 text-red-600' },
   };
   const b = map[status] || map.draft;
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${b.color}`}>{b.label}</span>;
 };
 
+const sourceBadge = (post: Post) => {
+  if (post.source === 'pal_base' && post.sourceType) {
+    const map: Record<string, string> = { banner: 'バナー', coupon: 'クーポン', flyer: 'チラシ' };
+    const label = map[post.sourceType] || post.sourceType;
+    return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700">{label}</span>;
+  }
+  if (post.source === 'pal_trust') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700">口コミ</span>;
+  }
+  return null;
+};
+
 // ── Post Detail View ───────────────────────────────────────────────────────────
 
-function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
+function PostDetailView({ post, onBack, onRefresh }: { post: Post; onBack: () => void; onRefresh?: () => void }) {
   const ACCENT = '#A62183';
+  const [isGeneratingImg, setIsGeneratingImg] = useState(false);
+  const [showMediaModal, setShowMediaModal] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+
+  const handleDetailGenerateImage = async () => {
+    setIsGeneratingImg(true);
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: post.id, topic: post.topic || post.title, keywords: post.keywords || [] }),
+      });
+      const data = await res.json();
+      if (data.success && data.imageUrl) {
+        setActionMsg('画像を追加しました');
+        onRefresh?.();
+      } else {
+        setActionMsg(data.error || '画像生成に失敗しました');
+      }
+    } catch {
+      setActionMsg('画像生成に失敗しました');
+    } finally {
+      setIsGeneratingImg(false);
+    }
+  };
+
+  const handleDetailApprovalRequest = async () => {
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/main/posts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: post.id, status: 'pending_approval' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMsg('承認申請を送信しました');
+        onRefresh?.();
+      } else {
+        setActionMsg(data.error || '承認申請に失敗しました');
+      }
+    } catch {
+      setActionMsg('承認申請に失敗しました');
+    }
+  };
+
+  const handleDetailApprove = async () => {
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/main/posts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: post.id, status: 'approved', approvedAt: new Date().toISOString() }),
+      });
+      if ((await res.json()).success) {
+        setActionMsg('承認しました');
+        onRefresh?.();
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleAddMediaToPost = async (url: string) => {
+    try {
+      const updatedUrls = [...(post.imageUrls || []), url];
+      await fetch('/api/main/posts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: post.id, imageUrls: updatedUrls, instagramImageUrl: post.instagramImageUrl || url }),
+      });
+      setActionMsg('画像を追加しました');
+      onRefresh?.();
+    } catch { /* ignore */ }
+    setShowMediaModal(false);
+  };
+
   return (
     <div className="space-y-4">
       {/* Back button + header */}
@@ -168,19 +283,28 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
           <p className="text-sm font-black text-slate-800 truncate">{post.title || '（タイトルなし）'}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {statusBadge(post.status)}
+            {sourceBadge(post)}
+            {post.scheduledAt && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-blue-600">
+                <Calendar size={9} />{new Date(post.scheduledAt).toLocaleString('ja-JP')}
+              </span>
+            )}
             <span className="text-[10px] text-slate-400">
               {post.publishedAt
                 ? `投稿: ${new Date(post.publishedAt).toLocaleDateString('ja-JP')}`
                 : `更新: ${new Date(post.updatedAt).toLocaleDateString('ja-JP')}`}
             </span>
           </div>
+          {post.approvalNote && (
+            <p className="text-[10px] text-red-500 mt-0.5">差し戻し: {post.approvalNote}</p>
+          )}
         </div>
         <div className="flex gap-1">
-          {['instagram','blog','gbp'].map((p) => {
+          {['instagram','blog','gbp','x'].map((p) => {
             const published = post.publishedPlatforms.includes(p);
             return (
               <span key={p} className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${published ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
-                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : p === 'gbp' ? 'GBP' : 'X'}
               </span>
             );
           })}
@@ -205,7 +329,7 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
       )}
 
       {/* Content cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {/* Instagram */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
@@ -238,6 +362,10 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
             {post.publishedPlatforms.includes('blog') && <CheckCircle size={12} className="ml-auto text-green-500" />}
           </div>
           <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.blogImageUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={post.blogImageUrl} alt="" className="w-full aspect-video object-cover rounded-lg mb-3 border border-slate-100" />
+            )}
             {post.blogTitle && (
               <p className="text-sm font-black text-slate-800 mb-2 leading-snug">{post.blogTitle}</p>
             )}
@@ -265,6 +393,10 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
             {post.publishedPlatforms.includes('gbp') && <CheckCircle size={12} className="ml-auto text-green-500" />}
           </div>
           <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.gbpImageUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={post.gbpImageUrl} alt="" className="w-full aspect-video object-cover rounded-lg mb-3 border border-slate-100" />
+            )}
             {post.gbpSummary ? (
               <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{post.gbpSummary}</p>
             ) : (
@@ -278,7 +410,90 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
             )}
           </div>
         </div>
+
+        {/* X (Twitter) */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+            <div className="w-5 h-5 rounded-md flex items-center justify-center bg-slate-100">
+              <Hash size={11} className="text-slate-700" />
+            </div>
+            <p className="text-xs font-bold text-slate-700">X（旧Twitter）</p>
+            {post.publishedPlatforms.includes('x') && <CheckCircle size={12} className="ml-auto text-green-500" />}
+          </div>
+          <div className="p-4 flex-1 overflow-y-auto custom-scrollbar max-h-72">
+            {post.xImageUrl && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={post.xImageUrl} alt="" className="w-full aspect-video object-cover rounded-lg mb-3 border border-slate-100" />
+            )}
+            {post.xText ? (
+              <>
+                <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{post.xText}</p>
+                <p className="text-[10px] text-slate-400 mt-2">{post.xText.length}/280文字</p>
+              </>
+            ) : (
+              <p className="text-xs text-slate-400 italic">コンテンツなし</p>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Images */}
+      {(post.imageUrls?.length ?? 0) > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
+            <ImageIcon size={12} />画像 ({post.imageUrls?.length}枚)
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            {post.imageUrls?.map((url, i) => (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img key={i} src={url} alt="" className="w-20 h-20 object-cover rounded-lg border border-slate-100" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {post.status !== 'published' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            {(post.status === 'draft' || post.status === 'preview') && (
+              <>
+                <button
+                  onClick={handleDetailApprovalRequest}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold border-2 transition-all"
+                  style={{ borderColor: '#f59e0b', color: '#b45309' }}
+                >
+                  <AlertCircle size={12} />承認申請
+                </button>
+                <button
+                  onClick={handleDetailApprove}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-bold transition-all"
+                  style={{ backgroundColor: '#16a34a' }}
+                >
+                  <CheckCircle size={12} />承認
+                </button>
+              </>
+            )}
+            <button
+              onClick={handleDetailGenerateImage}
+              disabled={isGeneratingImg}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 transition-all disabled:opacity-50"
+            >
+              {isGeneratingImg ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+              AI画像生成
+            </button>
+            <button
+              onClick={() => setShowMediaModal(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 transition-all"
+            >
+              <ImageIcon size={12} />画像を追加
+            </button>
+          </div>
+          {actionMsg && (
+            <p className="text-xs mt-2 text-slate-600">{actionMsg}</p>
+          )}
+        </div>
+      )}
 
       {/* Error log */}
       {post.errorLog && (
@@ -288,6 +503,14 @@ function PostDetailView({ post, onBack }: { post: Post; onBack: () => void }) {
           </p>
           <p className="text-[11px] text-red-600 font-mono whitespace-pre-wrap">{post.errorLog}</p>
         </div>
+      )}
+
+      {/* Media Modal */}
+      {showMediaModal && (
+        <MediaModal
+          onSelect={(url: string) => handleAddMediaToPost(url)}
+          onClose={() => setShowMediaModal(false)}
+        />
       )}
     </div>
   );
@@ -372,11 +595,40 @@ export default function MainPage() {
   const [editedCaption, setEditedCaption] = useState('');
   const [editedBlogTitle, setEditedBlogTitle] = useState('');
   const [editedGbpSummary, setEditedGbpSummary] = useState('');
+  const [editedXText, setEditedXText] = useState('');
   const [generateError, setGenerateError] = useState('');
+  // 各プラットフォーム画像
+  const [igImage, setIgImage] = useState<string | null>(null);
+  const [blogImage, setBlogImage] = useState<string | null>(null);
+  const [gbpImage, setGbpImage] = useState<string | null>(null);
+  const [xImage, setXImage] = useState<string | null>(null);
+  const [generatingImageFor, setGeneratingImageFor] = useState<string | null>(null);
+
+  // Template state
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
+  // Monthly plan state
+  const [showMonthlyPlan, setShowMonthlyPlan] = useState(false);
+  const [planMonth, setPlanMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [planFrequency, setPlanFrequency] = useState<'1x' | '2x' | '3x' | 'daily'>('2x');
+  const [planTopics, setPlanTopics] = useState('');
+  const [planPosts, setPlanPosts] = useState<Array<{ date: string; title: string; topic: string }>>([]);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+
+  // Schedule / approval state
+  const [showScheduleInput, setShowScheduleInput] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState('');
+
+  // AI image generation state
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
 
   // Publish state
   const [publishState, setPublishState] = useState<PublishState>({
-    instagram: 'idle', blog: 'idle', gbp: 'idle',
+    instagram: 'idle', blog: 'idle', gbp: 'idle', x: 'idle',
   });
   const [isPublishingAll, setIsPublishingAll] = useState(false);
 
@@ -455,11 +707,19 @@ export default function MainPage() {
         instagram: genData.instagram,
         blog: genData.blog,
         gbp: genData.gbp,
+        x: genData.x || undefined,
       });
       setEditedCaption(genData.instagram.caption || '');
       setEditedBlogTitle(genData.blog.title || '');
       setEditedGbpSummary(genData.gbp.summary || '');
-      setPublishState({ instagram: 'idle', blog: 'idle', gbp: 'idle' });
+      setEditedXText(genData.x?.text || '');
+      // 画像を初期化（共有画像があれば各プラットフォームに設定）
+      const firstImage = imageUrls.length > 0 ? imageUrls[0] : genData.instagram?.imageUrl || null;
+      setIgImage(firstImage);
+      setBlogImage(firstImage);
+      setGbpImage(firstImage);
+      setXImage(firstImage);
+      setPublishState({ instagram: 'idle', blog: 'idle', gbp: 'idle', x: 'idle' });
       setAppState('preview');
 
       // Refresh posts
@@ -471,7 +731,7 @@ export default function MainPage() {
     }
   }, [title, topic, keywords, targetAudience, imageUrls]);
 
-  const publishPlatform = async (platform: 'instagram' | 'blog' | 'gbp') => {
+  const publishPlatform = async (platform: 'instagram' | 'blog' | 'gbp' | 'x') => {
     if (!currentPostId) return;
 
     // Save edits first
@@ -481,8 +741,13 @@ export default function MainPage() {
       body: JSON.stringify({
         id: currentPostId,
         instagramCaption: editedCaption,
+        instagramImageUrl: igImage,
         blogTitle: editedBlogTitle,
+        blogImageUrl: blogImage,
         gbpSummary: editedGbpSummary,
+        gbpImageUrl: gbpImage,
+        xText: editedXText,
+        xImageUrl: xImage,
       }),
     });
 
@@ -517,18 +782,23 @@ export default function MainPage() {
         id: currentPostId,
         status: 'approved',
         instagramCaption: editedCaption,
+        instagramImageUrl: igImage,
         blogTitle: editedBlogTitle,
+        blogImageUrl: blogImage,
         gbpSummary: editedGbpSummary,
+        gbpImageUrl: gbpImage,
+        xText: editedXText,
+        xImageUrl: xImage,
       }),
     });
 
-    setPublishState({ instagram: 'publishing', blog: 'publishing', gbp: 'publishing' });
+    setPublishState({ instagram: 'publishing', blog: 'publishing', gbp: 'publishing', x: 'publishing' });
 
     try {
       const res = await fetch('/api/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId: currentPostId, platforms: ['instagram', 'blog', 'gbp'] }),
+        body: JSON.stringify({ postId: currentPostId, platforms: ['instagram', 'blog', 'gbp', 'x'] }),
       });
       const data = await res.json();
 
@@ -536,13 +806,14 @@ export default function MainPage() {
         instagram: data.results?.instagram?.success ? 'done' : 'error',
         blog: data.results?.blog?.success ? 'done' : 'error',
         gbp: data.results?.gbp?.success ? 'done' : 'error',
+        x: data.results?.x?.success ? 'done' : 'error',
       });
 
       // Refresh posts
       const session = await fetch('/api/main/session').then((r) => r.json());
       if (session.authenticated) setPosts(session.posts || []);
     } catch {
-      setPublishState({ instagram: 'error', blog: 'error', gbp: 'error' });
+      setPublishState({ instagram: 'error', blog: 'error', gbp: 'error', x: 'error' });
     } finally {
       setIsPublishingAll(false);
       setAppState('preview');
@@ -557,11 +828,197 @@ export default function MainPage() {
     setImageUrls([]);
     setGenerated(null);
     setCurrentPostId(null);
-    setPublishState({ instagram: 'idle', blog: 'idle', gbp: 'idle' });
+    setPublishState({ instagram: 'idle', blog: 'idle', gbp: 'idle', x: 'idle' });
     setGenerateError('');
     setTone('professional');
     setContentLength('default');
+    setEditedXText('');
+    setIgImage(null);
+    setBlogImage(null);
+    setGbpImage(null);
+    setXImage(null);
+    setShowScheduleInput(false);
+    setScheduledAt('');
+    setShowMonthlyPlan(false);
     setAppState('idle');
+  };
+
+  // プラットフォーム別画像生成
+  const handleGenerateImageFor = async (platform: 'instagram' | 'blog' | 'gbp' | 'x') => {
+    if (!currentPostId) return;
+    setGeneratingImageFor(platform);
+    try {
+      const styleMap: Record<string, string> = {
+        instagram: 'photorealistic',
+        blog: 'minimal',
+        gbp: 'warm',
+        x: 'illustration',
+      };
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: currentPostId, topic: topic || title, keywords, style: styleMap[platform] }),
+      });
+      const data = await res.json();
+      if (data.success && data.imageUrl) {
+        const url = data.imageUrl;
+        const setter = { instagram: setIgImage, blog: setBlogImage, gbp: setGbpImage, x: setXImage }[platform];
+        setter?.(url);
+        // DB にも保存
+        const fieldMap: Record<string, string> = { instagram: 'instagramImageUrl', blog: 'blogImageUrl', gbp: 'gbpImageUrl', x: 'xImageUrl' };
+        await fetch('/api/main/posts', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: currentPostId, [fieldMap[platform]]: url }),
+        });
+      }
+    } catch { /* ignore */ }
+    setGeneratingImageFor(null);
+  };
+
+  // 全プラットフォーム一括画像生成
+  const handleGenerateAllImages = async () => {
+    if (!currentPostId) return;
+    setGeneratingImageFor('all');
+    try {
+      const platforms = ['instagram', 'blog', 'gbp', 'x'] as const;
+      const styleMap: Record<string, string> = {
+        instagram: 'photorealistic',
+        blog: 'minimal',
+        gbp: 'warm',
+        x: 'illustration',
+      };
+      const results = await Promise.allSettled(
+        platforms.map(async (p) => {
+          const res = await fetch('/api/generate-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ postId: currentPostId, topic: topic || title, keywords, style: styleMap[p] }),
+          });
+          const data = await res.json();
+          return { platform: p, url: data.success ? data.imageUrl : null };
+        }),
+      );
+      const patchData: Record<string, string> = {};
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.url) {
+          const { platform, url } = result.value;
+          const setter = { instagram: setIgImage, blog: setBlogImage, gbp: setGbpImage, x: setXImage }[platform];
+          setter?.(url);
+          const fieldMap: Record<string, string> = { instagram: 'instagramImageUrl', blog: 'blogImageUrl', gbp: 'gbpImageUrl', x: 'xImageUrl' };
+          patchData[fieldMap[platform]] = url;
+        }
+      }
+      if (Object.keys(patchData).length > 0) {
+        await fetch('/api/main/posts', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: currentPostId, ...patchData }),
+        });
+      }
+    } catch { /* ignore */ }
+    setGeneratingImageFor(null);
+  };
+
+  // Fetch templates
+  const fetchTemplates = async () => {
+    try {
+      const res = await fetch(`/api/templates?paletteId=${paletteId}`);
+      const data = await res.json();
+      setTemplates(data.templates || []);
+      setShowTemplatePicker(true);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Apply template
+  const applyTemplate = (tpl: Template) => {
+    setTopic(tpl.topic || '');
+    if (tpl.tone === 'casual') setTone('casual');
+    else if (tpl.tone === 'friendly') setTone('friendly');
+    else setTone('professional');
+    setShowTemplatePicker(false);
+  };
+
+  // Generate monthly plan
+  const handleGeneratePlan = async () => {
+    setIsGeneratingPlan(true);
+    try {
+      const res = await fetch('/api/generate-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paletteId, month: planMonth, frequency: planFrequency, topics: planTopics }),
+      });
+      const data = await res.json();
+      setPlanPosts(data.posts || []);
+    } catch {
+      // ignore
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
+
+  // Approve post
+  const handleApprove = async (mode: 'now' | 'schedule') => {
+    if (!currentPostId) return;
+    const body: Record<string, unknown> = { id: currentPostId };
+    if (mode === 'schedule' && scheduledAt) {
+      body.status = 'scheduled';
+      body.scheduledAt = new Date(scheduledAt).toISOString();
+    } else {
+      body.status = 'approved';
+    }
+    await fetch('/api/main/posts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const session = await fetch('/api/main/session').then((r) => r.json());
+    if (session.authenticated) setPosts(session.posts || []);
+  };
+
+  // Request approval
+  const handleRequestApproval = async () => {
+    if (!currentPostId) return;
+    await fetch('/api/main/posts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: currentPostId, status: 'pending_approval' }),
+    });
+    const session = await fetch('/api/main/session').then((r) => r.json());
+    if (session.authenticated) setPosts(session.posts || []);
+  };
+
+  // Generate AI image
+  const handleGenerateImage = async () => {
+    if (!currentPostId) return;
+    setIsGeneratingImage(true);
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: currentPostId, topic: topic || title, keywords }),
+      });
+      const data = await res.json();
+      if (data.success && data.imageUrl) {
+        setImageUrls((prev) => [...prev, data.imageUrl]);
+        // 投稿レコードにも反映
+        await fetch('/api/main/posts', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: currentPostId,
+            imageUrls: [...imageUrls, data.imageUrl],
+            instagramImageUrl: imageUrls.length === 0 ? data.imageUrl : undefined,
+          }),
+        });
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsGeneratingImage(false);
+    }
   };
 
   // ── Login screen ─────────────────────────────────────────────────────────
@@ -569,7 +1026,7 @@ export default function MainPage() {
     return <LoginPanel onLogin={handleLogin} />;
   }
 
-  const allPublished = publishState.instagram === 'done' && publishState.blog === 'done' && publishState.gbp === 'done';
+  const allPublished = publishState.instagram === 'done' && publishState.blog === 'done' && publishState.gbp === 'done' && publishState.x === 'done';
 
   return (
     <>
@@ -753,6 +1210,47 @@ export default function MainPage() {
                 </div>
               </div>
 
+            {/* Template and AI image buttons */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={fetchTemplates}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                <LayoutTemplate size={12} />テンプレートから作成
+              </button>
+              <button
+                onClick={handleGenerateImage}
+                disabled={isGeneratingImage || !currentPostId}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40"
+              >
+                {isGeneratingImage ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                AI画像生成
+              </button>
+            </div>
+
+            {/* Template Picker */}
+            {showTemplatePicker && templates.length > 0 && (
+              <div className="mb-3 bg-white border border-slate-200 rounded-xl shadow-lg p-3 space-y-1.5">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-bold text-slate-500">テンプレート選択</p>
+                  <button onClick={() => setShowTemplatePicker(false)} className="text-slate-400 hover:text-slate-600"><X size={12} /></button>
+                </div>
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => applyTemplate(tpl)}
+                    className="w-full text-left p-2 rounded-lg hover:bg-slate-50 transition-colors border border-slate-100"
+                  >
+                    <p className="text-xs font-bold text-slate-700">{tpl.name}</p>
+                    {tpl.description && <p className="text-[10px] text-slate-400 mt-0.5">{tpl.description}</p>}
+                  </button>
+                ))}
+                {templates.length === 0 && (
+                  <p className="text-xs text-slate-400 text-center py-2">テンプレートがありません</p>
+                )}
+              </div>
+            )}
+
             {generateError && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 text-xs text-red-600">
                 {generateError}
@@ -774,6 +1272,84 @@ export default function MainPage() {
                 <><Sparkles size={16} />コンテンツ生成</>
               )}
             </button>
+          </div>
+
+          {/* Monthly Plan */}
+          <div className="border-t border-slate-100">
+            <button
+              onClick={() => setShowMonthlyPlan((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-800"
+            >
+              <Layers size={11} />
+              月間計画
+              {showMonthlyPlan ? <ChevronUp size={11} className="ml-auto" /> : <ChevronDown size={11} className="ml-auto" />}
+            </button>
+            {showMonthlyPlan && (
+              <div className="px-4 pb-4 space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 mb-1">対象月</label>
+                  <input
+                    type="month"
+                    value={planMonth}
+                    onChange={(e) => setPlanMonth(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 mb-1">投稿頻度</label>
+                  <div className="flex gap-1">
+                    {([
+                      { value: '1x', label: '週1回' },
+                      { value: '2x', label: '週2回' },
+                      { value: '3x', label: '週3回' },
+                      { value: 'daily', label: '毎日' },
+                    ] as const).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        onClick={() => setPlanFrequency(value)}
+                        className="flex-1 py-1 rounded text-[10px] font-bold border transition-all"
+                        style={planFrequency === value
+                          ? { backgroundColor: ACCENT, color: '#fff', borderColor: ACCENT }
+                          : { backgroundColor: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 mb-1">トピック・テーマ</label>
+                  <textarea
+                    value={planTopics}
+                    onChange={(e) => setPlanTopics(e.target.value)}
+                    placeholder="投稿したいテーマを入力（カンマ区切り）"
+                    rows={2}
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50 resize-none"
+                  />
+                </div>
+                <button
+                  onClick={handleGeneratePlan}
+                  disabled={isGeneratingPlan}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-white text-xs font-bold disabled:opacity-60 transition-all"
+                  style={{ backgroundColor: ACCENT }}
+                >
+                  {isGeneratingPlan ? <><Loader2 size={12} className="animate-spin" />生成中...</> : <><Calendar size={12} />計画を生成</>}
+                </button>
+                {planPosts.length > 0 && (
+                  <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
+                    {planPosts.map((p, i) => (
+                      <div key={i} className="flex items-start gap-2 p-2 bg-slate-50 rounded-lg">
+                        <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">{p.date}</span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-slate-700 truncate">{p.title}</p>
+                          <p className="text-[10px] text-slate-400 truncate">{p.topic}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* History */}
@@ -802,9 +1378,10 @@ export default function MainPage() {
                           <p className="text-xs font-bold text-slate-700 truncate">{post.title || '（タイトルなし）'}</p>
                           <div className="flex items-center gap-1.5 mt-1">
                             <span className="text-[9px] text-slate-400">{new Date(post.updatedAt).toLocaleDateString('ja-JP')}</span>
+                            {sourceBadge(post)}
                             {post.publishedPlatforms.map((p) => (
                               <span key={p} className="text-[9px] bg-green-50 text-green-700 px-1 py-0.5 rounded font-bold">
-                                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : 'GBP'}
+                                {p === 'instagram' ? 'IG' : p === 'blog' ? 'Blog' : p === 'gbp' ? 'GBP' : 'X'}
                               </span>
                             ))}
                             {post.status === 'failed' && (
@@ -840,13 +1417,21 @@ export default function MainPage() {
             <PostDetailView
               post={selectedHistoryPost}
               onBack={() => { setSelectedHistoryPost(null); setAppState('idle'); }}
+              onRefresh={async () => {
+                const session = await fetch('/api/main/session').then((r) => r.json());
+                if (session.authenticated) {
+                  setPosts(session.posts || []);
+                  const updated = (session.posts || []).find((p: Post) => p.id === selectedHistoryPost.id);
+                  if (updated) setSelectedHistoryPost(updated);
+                }
+              }}
             />
           )}
 
           {appState === 'generating' && (
             <div className="flex flex-col items-center justify-center h-full">
               <Loader2 size={36} className="animate-spin mb-4" style={{ color: ACCENT }} />
-              <p className="text-sm font-bold text-slate-600">3プラットフォームのコンテンツを生成中...</p>
+              <p className="text-sm font-bold text-slate-600">4プラットフォームのコンテンツを生成中...</p>
               <p className="text-xs text-slate-400 mt-1">しばらくお待ちください</p>
             </div>
           )}
@@ -866,8 +1451,22 @@ export default function MainPage() {
                 )}
               </div>
 
-              {/* Three preview cards */}
-              <div className="grid grid-cols-3 gap-4">
+              {/* 一括画像生成ボタン */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGenerateAllImages}
+                  disabled={generatingImageFor !== null}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white transition-all disabled:opacity-50"
+                  style={{ backgroundColor: ACCENT }}
+                >
+                  {generatingImageFor === 'all' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                  全SNS画像を一括生成
+                </button>
+                <span className="text-[10px] text-slate-400">各プラットフォームに最適な画像をAIで生成します</span>
+              </div>
+
+              {/* Platform preview cards */}
+              <div className="grid grid-cols-4 gap-4">
                 {/* Instagram */}
                 <PreviewCard
                   icon={<Instagram size={13} />}
@@ -876,15 +1475,23 @@ export default function MainPage() {
                   publishState={publishState.instagram}
                   onPublish={() => publishPlatform('instagram')}
                 >
-                  {generated.instagram.imageUrl && (
+                  {igImage && (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={generated.instagram.imageUrl} alt="" className="w-full aspect-square object-cover rounded-lg mb-3 border border-slate-100" />
+                    <img src={igImage} alt="" className="w-full aspect-square object-cover rounded-lg mb-2 border border-slate-100" />
                   )}
+                  <button
+                    onClick={() => handleGenerateImageFor('instagram')}
+                    disabled={generatingImageFor !== null}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 mb-2 rounded-md text-[10px] font-bold border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {generatingImageFor === 'instagram' ? <Loader2 size={10} className="animate-spin" /> : <ImageIcon size={10} />}
+                    {igImage ? '画像を再生成' : '画像を生成'}
+                  </button>
                   <textarea
                     value={editedCaption}
                     onChange={(e) => setEditedCaption(e.target.value)}
                     className="w-full text-xs text-slate-700 leading-relaxed resize-none outline-none border-0 bg-transparent"
-                    rows={8}
+                    rows={6}
                   />
                 </PreviewCard>
 
@@ -896,6 +1503,18 @@ export default function MainPage() {
                   publishState={publishState.blog}
                   onPublish={() => publishPlatform('blog')}
                 >
+                  {blogImage && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={blogImage} alt="" className="w-full aspect-video object-cover rounded-lg mb-2 border border-slate-100" />
+                  )}
+                  <button
+                    onClick={() => handleGenerateImageFor('blog')}
+                    disabled={generatingImageFor !== null}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 mb-2 rounded-md text-[10px] font-bold border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {generatingImageFor === 'blog' ? <Loader2 size={10} className="animate-spin" /> : <ImageIcon size={10} />}
+                    {blogImage ? '画像を再生成' : '画像を生成'}
+                  </button>
                   <input
                     value={editedBlogTitle}
                     onChange={(e) => setEditedBlogTitle(e.target.value)}
@@ -915,11 +1534,23 @@ export default function MainPage() {
                   publishState={publishState.gbp}
                   onPublish={() => publishPlatform('gbp')}
                 >
+                  {gbpImage && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={gbpImage} alt="" className="w-full aspect-video object-cover rounded-lg mb-2 border border-slate-100" />
+                  )}
+                  <button
+                    onClick={() => handleGenerateImageFor('gbp')}
+                    disabled={generatingImageFor !== null}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 mb-2 rounded-md text-[10px] font-bold border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {generatingImageFor === 'gbp' ? <Loader2 size={10} className="animate-spin" /> : <ImageIcon size={10} />}
+                    {gbpImage ? '画像を再生成' : '画像を生成'}
+                  </button>
                   <textarea
                     value={editedGbpSummary}
                     onChange={(e) => setEditedGbpSummary(e.target.value)}
                     className="w-full text-xs text-slate-700 leading-relaxed resize-none outline-none border-0 bg-transparent"
-                    rows={10}
+                    rows={8}
                   />
                   {generated.gbp.callToAction && (
                     <div className="mt-3 pt-3 border-t border-slate-100">
@@ -928,6 +1559,82 @@ export default function MainPage() {
                     </div>
                   )}
                 </PreviewCard>
+
+                {/* X (Twitter) */}
+                <PreviewCard
+                  icon={<Hash size={13} />}
+                  label="X（旧Twitter）"
+                  color="#000000"
+                  publishState={publishState.x}
+                  onPublish={() => publishPlatform('x')}
+                >
+                  {xImage && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={xImage} alt="" className="w-full aspect-video object-cover rounded-lg mb-2 border border-slate-100" />
+                  )}
+                  <button
+                    onClick={() => handleGenerateImageFor('x')}
+                    disabled={generatingImageFor !== null}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 mb-2 rounded-md text-[10px] font-bold border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {generatingImageFor === 'x' ? <Loader2 size={10} className="animate-spin" /> : <ImageIcon size={10} />}
+                    {xImage ? '画像を再生成' : '画像を生成'}
+                  </button>
+                  <textarea
+                    value={editedXText}
+                    onChange={(e) => setEditedXText(e.target.value)}
+                    className="w-full text-xs text-slate-700 leading-relaxed resize-none outline-none border-0 bg-transparent"
+                    rows={6}
+                    maxLength={280}
+                  />
+                  <p className={`text-[10px] mt-1 font-bold ${editedXText.length > 280 ? 'text-red-500' : 'text-slate-400'}`}>
+                    {editedXText.length}/280文字
+                  </p>
+                </PreviewCard>
+              </div>
+
+              {/* Approval / Schedule actions */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleRequestApproval}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold border-2 transition-all"
+                    style={{ borderColor: '#f59e0b', color: '#b45309' }}
+                  >
+                    <AlertCircle size={12} />承認申請
+                  </button>
+                  <button
+                    onClick={() => handleApprove('now')}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-bold transition-all"
+                    style={{ backgroundColor: '#16a34a' }}
+                  >
+                    <CheckCircle size={12} />今すぐ承認
+                  </button>
+                  <button
+                    onClick={() => setShowScheduleInput((v) => !v)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold border border-blue-300 text-blue-700 hover:bg-blue-50 transition-all"
+                  >
+                    <Calendar size={12} />スケジュール投稿
+                  </button>
+                </div>
+                {showScheduleInput && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none bg-slate-50"
+                    />
+                    <button
+                      onClick={() => { handleApprove('schedule'); setShowScheduleInput(false); }}
+                      disabled={!scheduledAt}
+                      className="px-4 py-2 rounded-lg text-white text-xs font-bold disabled:opacity-40 transition-all"
+                      style={{ backgroundColor: ACCENT }}
+                    >
+                      確定
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Publish all bar */}
@@ -935,7 +1642,7 @@ export default function MainPage() {
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-slate-800">すべてのプラットフォームに投稿</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Instagram・ブログ・GBPに同時投稿します</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Instagram・ブログ・GBP・Xに同時投稿します</p>
                   </div>
                   <button
                     onClick={publishAll}

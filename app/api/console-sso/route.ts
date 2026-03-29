@@ -36,8 +36,8 @@ export async function GET(req: NextRequest) {
   const res = NextResponse.redirect(new URL(redirect, req.url));
   res.cookies.set(MAIN_SESSION_COOKIE_NAME, session, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 12 * 60 * 60,
     path: '/',
   });

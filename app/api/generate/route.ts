@@ -76,16 +76,19 @@ export async function POST(req: Request) {
         instagram: '300〜500文字（簡潔にまとめ、ハッシュタグは5〜8個）',
         blog: '400〜700文字相当のHTML（要点を絞った短い記事）',
         gbp: '100〜200文字（一言でポイントを伝える）',
+        x: '100〜140文字（簡潔に要点を伝え、ハッシュタグ1〜2個）',
       },
       default: {
         instagram: '最大2200文字（改行あり、ハッシュタグを末尾に配置）',
         blog: '1500〜2000文字相当のHTML（見出し・段落・強調を含む）',
         gbp: '200〜1500文字（地域・サービス名を含む）',
+        x: '200〜280文字（ハッシュタグ2〜3個を含む）',
       },
       long: {
         instagram: '1000〜2200文字（詳細な説明と充実したハッシュタグ15〜30個）',
         blog: '2500〜4000文字相当のHTML（詳細な解説・FAQ・まとめセクションを含む長文記事）',
         gbp: '600〜1500文字（詳細な説明、特徴・強み・アクセスなどを含む）',
+        x: '200〜280文字（詳細な説明とハッシュタグ2〜3個）',
       },
     };
     const lengthSpec = lengthMap[contentLength];
@@ -107,7 +110,7 @@ GBP投稿はMEOを意識し、地域名・サービス名・検索キーワー�
     }
 
     const systemPrompt = `あなたはSEO・MEO・AIOに精通したデジタルマーケティングの専門家です。
-入力された情報をもとに、3つのプラットフォーム向けのコンテンツを同時に生成します。
+入力された情報をもとに、4つのプラットフォーム向けのコンテンツを同時に生成します。
 必ずJSON形式のみで回答し、それ以外のテキストは一切含めないでください。${contextAddendum}`;
 
     const userPrompt = `以下の情報をもとに、コンテンツを生成してください。
@@ -136,6 +139,9 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
   "gbp": {
     "summary": "Googleビジネスプロフィールの最新情報テキスト（${lengthSpec.gbp}）",
     "callToAction": "ウェブサイトを見る"
+  },
+  "x": {
+    "text": "X (Twitter) 投稿文（${lengthSpec.x}、最大280文字厳守、ハッシュタグ2〜3個を本文内に含める）"
   }
 }`;
 
@@ -174,6 +180,7 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
       instagram: { caption: string; hashTags: string[] };
       blog: { title: string; bodyHtml: string; metaDescription: string; slug: string };
       gbp: { summary: string; callToAction: string };
+      x: { text: string };
     };
 
     try {
@@ -201,6 +208,7 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
         blogSlug: generated.blog.slug,
         gbpSummary: generated.gbp.summary,
         gbpCallToAction: generated.gbp.callToAction,
+        xText: generated.x?.text || null,
       });
     }
 
@@ -219,6 +227,9 @@ ${imageUrls.length > 0 ? `- 画像URL数: ${imageUrls.length}枚（最初の画�
       gbp: {
         summary: generated.gbp.summary,
         callToAction: generated.gbp.callToAction,
+      },
+      x: {
+        text: generated.x?.text || '',
       },
     });
   } catch (error: unknown) {

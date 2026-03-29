@@ -68,17 +68,37 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ success: false, error: '投稿が見つかりません。' }, { status: 404 });
     }
 
-    const updated = await updatePost(postId, {
-      status: body.status,
-      instagramCaption: body.instagramCaption,
-      instagramImageUrl: body.instagramImageUrl,
-      blogTitle: body.blogTitle,
-      blogBodyHtml: body.blogBodyHtml,
-      blogSlug: body.blogSlug,
-      gbpSummary: body.gbpSummary,
-      gbpCallToAction: body.gbpCallToAction,
-      approvedAt: body.status === 'approved' ? new Date().toISOString() : undefined,
-    });
+    const updateData: Record<string, unknown> = {};
+
+    // 基本フィールド
+    if (body.status !== undefined) updateData.status = body.status;
+    if (body.title !== undefined) updateData.title = body.title;
+    if (body.topic !== undefined) updateData.topic = body.topic;
+    if (body.keywords !== undefined) updateData.keywords = body.keywords;
+    if (body.targetAudience !== undefined) updateData.targetAudience = body.targetAudience;
+    if (body.imageUrls !== undefined) updateData.imageUrls = body.imageUrls;
+
+    // プラットフォーム別コンテンツ
+    if (body.instagramCaption !== undefined) updateData.instagramCaption = body.instagramCaption;
+    if (body.instagramImageUrl !== undefined) updateData.instagramImageUrl = body.instagramImageUrl;
+    if (body.blogTitle !== undefined) updateData.blogTitle = body.blogTitle;
+    if (body.blogBodyHtml !== undefined) updateData.blogBodyHtml = body.blogBodyHtml;
+    if (body.blogSlug !== undefined) updateData.blogSlug = body.blogSlug;
+    if (body.gbpSummary !== undefined) updateData.gbpSummary = body.gbpSummary;
+    if (body.gbpCallToAction !== undefined) updateData.gbpCallToAction = body.gbpCallToAction;
+    if (body.gbpImageUrl !== undefined) updateData.gbpImageUrl = body.gbpImageUrl;
+    if (body.blogImageUrl !== undefined) updateData.blogImageUrl = body.blogImageUrl;
+    if (body.xText !== undefined) updateData.xText = body.xText;
+    if (body.xImageUrl !== undefined) updateData.xImageUrl = body.xImageUrl;
+
+    // スケジュール
+    if (body.scheduledAt !== undefined) updateData.scheduledAt = body.scheduledAt;
+
+    // 承認
+    if (body.approvalNote !== undefined) updateData.approvalNote = body.approvalNote;
+    if (body.status === 'approved') updateData.approvedAt = new Date().toISOString();
+
+    const updated = await updatePost(postId, updateData);
 
     return NextResponse.json({ success: true, post: updated });
   } catch (error: unknown) {
