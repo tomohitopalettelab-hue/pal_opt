@@ -31,10 +31,10 @@ export async function POST(req: Request) {
       process.env.ADMIN_USER?.trim() ||
       process.env.PLATFORM_ADMIN_USERNAME?.trim() ||
       'tomohito0108';
+    // NEXT_PUBLIC_* はクライアントバンドルに露出するためパスワードに使わない（サーバ専用のみ）
     const adminPass =
       process.env.ADMIN_PASSWORD?.trim() ||
-      process.env.PLATFORM_ADMIN_PASSWORD?.trim() ||
-      process.env.NEXT_PUBLIC_ADMIN_PASSWORD?.trim();
+      process.env.PLATFORM_ADMIN_PASSWORD?.trim();
 
     if (!adminUser || !adminPass) {
       return NextResponse.json(
