@@ -455,6 +455,12 @@ export const insertActions = async (
   return inserted;
 };
 
+export const getAction = async (projectId: number, actionId: number): Promise<Action | null> => {
+  await ensureTables();
+  const { rows } = await sql`SELECT * FROM pal_opt_actions WHERE id = ${actionId} AND project_id = ${projectId} LIMIT 1`;
+  return rows.length ? rowToAction(rows[0]) : null;
+};
+
 export const setActionStatus = async (projectId: number, actionId: number, status: Action['status']): Promise<void> => {
   await ensureTables();
   await sql`

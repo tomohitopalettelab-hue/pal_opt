@@ -60,6 +60,57 @@ export const generateReplyDraft = async (
   return draft.slice(0, MAX_REPLY_LENGTH);
 };
 
+/** GBP投稿（Local Post）の下書きを生成（送信はしない） */
+export const generateLocalPostDraft = async (project: Project, theme: string): Promise<string> => {
+  const res = await openai().chat.completions.create({
+    model: REPLY_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: `あなたは「${project.businessName}」（${[project.industry, project.area].filter(Boolean).join(' / ')}）のGoogleビジネスプロフィール投稿を書くライターです。
+
+ルール:
+- 200〜400文字。冒頭1文で要点（結論先出し）
+- 見込み客に役立つ具体的な情報（豆知識・季節の提案・サービス紹介など）。宣伝一辺倒にしない
+- 誇大表現・確約できない割引・絵文字の多用をしない（絵文字は最大1つ）
+- 投稿本文のみを出力`,
+      },
+      { role: 'user', content: `投稿テーマ: ${theme || '今の季節に合わせた、この業種らしいお役立ち情報'}` },
+    ],
+    temperature: 0.8,
+    max_tokens: 600,
+  });
+  const draft = (res.choices?.[0]?.message?.content ?? '').trim();
+  if (!draft) throw new Error('投稿案の生成に失敗しました。');
+  return draft.slice(0, 1400); // GBP上限1500より安全側
+};
+
+/** GBP投稿を送信（v4 localPosts.create） */
+export const sendLocalPost = async (
+  accessToken: string,
+  locationName: string,
+  summary: string,
+  linkUrl?: string | null,
+): Promise<void> => {
+  const body: Record<string, unknown> = {
+    languageCode: 'ja',
+    topicType: 'STANDARD',
+    summary: summary.trim().slice(0, 1400),
+  };
+  if (linkUrl) {
+    body.callToAction = { actionType: 'LEARN_MORE', url: linkUrl };
+  }
+  const res = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/localPosts`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(data.error?.message || `投稿に失敗しました (${res.status})`);
+  }
+};
+
 /**
  * 口コミへ返信を送信（v4 reviews.updateReply）。
  * locationName: accounts/{a}/locations/{l} 形式、reviewId: 口コミID。

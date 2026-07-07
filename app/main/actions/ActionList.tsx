@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Loader2, Wand2, Check, Copy, Undo2, X } from 'lucide-react';
+import { Loader2, Wand2, Check, Copy, Undo2, X, Send } from 'lucide-react';
 import type { Action } from '@/lib/db';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -18,6 +18,30 @@ export default function ActionList({ initialActions }: { initialActions: Action[
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [studioBusy, setStudioBusy] = useState<number | null>(null);
+  const [studioMsg, setStudioMsg] = useState<Record<number, string>>({});
+
+  const sendToStudio = async (actionId: number) => {
+    setStudioBusy(actionId);
+    setStudioMsg((m) => ({ ...m, [actionId]: '' }));
+    try {
+      const res = await fetch('/api/app/studio-article', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setStudioMsg((m) => ({
+        ...m,
+        [actionId]: res.ok && data?.success
+          ? `✓ Studioに下書き「${data.title}」を作成しました。Studio側で確認して公開してください。`
+          : `送稿失敗: ${data?.error || 'エラー'}`,
+      }));
+    } catch {
+      setStudioMsg((m) => ({ ...m, [actionId]: '送稿失敗: 通信エラー' }));
+    }
+    setStudioBusy(null);
+  };
 
   const generate = async () => {
     setGenerating(true);
@@ -95,6 +119,24 @@ export default function ActionList({ initialActions }: { initialActions: Action[
       </summary>
       <div className="mt-3 pt-3 border-t border-[#f2ecf1]">
         <p className="text-xs font-bold opacity-70 leading-relaxed">{a.description}</p>
+        {(a.category === 'content' || a.category === 'faq') && a.status === 'open' && (
+          <div className="mt-2.5">
+            <button
+              onClick={() => sendToStudio(a.id)}
+              disabled={studioBusy === a.id}
+              className="flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-full border disabled:opacity-40"
+              style={{ color: 'var(--opt-accent-dark)', borderColor: 'var(--opt-accent)' }}
+            >
+              {studioBusy === a.id ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+              {studioBusy === a.id ? '記事を生成してStudioへ送稿中...（1分弱）' : 'AIで記事化してPal Studioに下書き作成'}
+            </button>
+            {studioMsg[a.id] && (
+              <p className={`text-[11px] font-bold mt-1.5 ${studioMsg[a.id].startsWith('✓') ? '' : 'text-red-600'}`} style={studioMsg[a.id].startsWith('✓') ? { color: 'var(--opt-accent-dark)' } : undefined}>
+                {studioMsg[a.id]}
+              </p>
+            )}
+          </div>
+        )}
         {a.deliverable && (
           <div className="mt-3">
             <div className="flex items-center justify-between mb-1.5">

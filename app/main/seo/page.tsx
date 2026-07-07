@@ -28,6 +28,94 @@ type GbpData = {
   error?: string;
 };
 
+function PostComposer() {
+  const [theme, setTheme] = useState('');
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+
+  const makeDraft = async () => {
+    setBusy(true); setErr(''); setDone(false);
+    try {
+      const res = await fetch('/api/app/gbp-posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) setErr(data?.error || '生成に失敗しました。');
+      else setDraft(data.draft);
+    } catch { setErr('通信エラーが発生しました。'); }
+    setBusy(false);
+  };
+
+  const send = async () => {
+    if (!draft?.trim()) return;
+    setBusy(true); setErr('');
+    try {
+      const res = await fetch('/api/app/gbp-posts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary: draft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) setErr(data?.error || '投稿に失敗しました。');
+      else { setDone(true); setDraft(null); setTheme(''); }
+    } catch { setErr('通信エラーが発生しました。'); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-white rounded-3xl border border-[#eadfe7] p-6 mb-4">
+      <p className="text-xs font-black opacity-60 mb-1">GBP投稿を作成</p>
+      <p className="text-[10px] font-bold opacity-40 mb-3">定期的な投稿はプロフィールの鮮度シグナルになり、MEO・AIOの両方に効きます。</p>
+      {done && <p className="text-xs font-black mb-2" style={{ color: 'var(--opt-accent-dark)' }}>✓ 投稿しました。Googleマップに反映されるまで数分かかることがあります。</p>}
+      {draft === null ? (
+        <div className="flex gap-2">
+          <input
+            value={theme}
+            onChange={(e) => setTheme(e.target.value)}
+            placeholder="テーマ（空欄なら季節のお役立ち情報をAIが選びます）"
+            className="flex-1 px-4 py-2.5 rounded-xl border border-[#e5d5e1] bg-[#fdfbfd] focus:outline-none focus:border-[var(--opt-accent)] text-xs font-bold"
+          />
+          <button
+            onClick={makeDraft}
+            disabled={busy}
+            className="shrink-0 flex items-center gap-1.5 text-[11px] font-black px-4 py-2.5 rounded-xl text-white disabled:opacity-40"
+            style={{ background: 'var(--opt-accent)' }}
+          >
+            {busy ? <Loader2 size={11} className="animate-spin" /> : null} AI投稿案を作成
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={5}
+            className="w-full px-3 py-2.5 rounded-xl border border-[#e5d5e1] bg-[#fdfbfd] focus:outline-none focus:border-[var(--opt-accent)] text-xs font-medium leading-relaxed"
+          />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={send}
+              disabled={busy || !draft.trim()}
+              className="flex items-center gap-1.5 text-[11px] font-black px-3.5 py-1.5 rounded-full text-white disabled:opacity-40"
+              style={{ background: 'var(--opt-accent)' }}
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : null} この内容で投稿する
+            </button>
+            <button onClick={makeDraft} disabled={busy} className="text-[11px] font-bold underline opacity-50 hover:opacity-100">作り直す</button>
+            <button onClick={() => setDraft(null)} disabled={busy} className="text-[11px] font-bold underline opacity-50 hover:opacity-100">キャンセル</button>
+          </div>
+          <p className="text-[10px] font-bold opacity-40">投稿するとGoogleマップ・検索のビジネスプロフィールに公開されます。</p>
+        </div>
+      )}
+      {err && <p className="text-[11px] font-bold text-red-600 mt-1.5">{err}</p>}
+    </div>
+  );
+}
+
 function ReviewCard({ review }: { review: Review }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -269,6 +357,7 @@ export default function SeoMeoPage() {
                 <p className="text-[10px] font-bold opacity-40">口コミ返信はAIOにも効きます</p>
               </div>
             </div>
+            <PostComposer />
             <div className="space-y-3">
               {[...gbp.recent]
                 .sort((a, b) => Number(a.hasReply) - Number(b.hasReply))
