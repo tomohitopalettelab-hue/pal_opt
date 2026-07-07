@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import { Radar, Quote, TrendingUp } from 'lucide-react';
+import { Radar, Quote, TrendingUp, Stethoscope, Wrench } from 'lucide-react';
 import { getSession } from '@/lib/session-server';
-import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts } from '@/lib/db';
+import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts, getLatestAudit, listActions } from '@/lib/db';
 import { ENGINE_LABELS, type Engine } from '@/lib/engines';
 import Onboarding from './Onboarding';
 
@@ -16,11 +16,15 @@ export default async function MainPage() {
   const project = await getProjectByPaletteId(session.paletteId);
   if (!project) return <Onboarding />;
 
-  const [stats, recentRuns, prompts] = await Promise.all([
+  const [stats, recentRuns, prompts, audit, actions] = await Promise.all([
     getDailyStats(project.id, 30),
     listRuns(project.id, { limit: 6 }),
     listPrompts(project.id),
+    getLatestAudit(project.id),
+    listActions(project.id),
   ]);
+  const openActions = actions.filter((a) => a.status === 'open').length;
+  const doneActions = actions.filter((a) => a.status === 'done').length;
 
   const activePrompts = prompts.filter((p) => p.active).length;
   const last7 = stats.filter((s) => s.day >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10));
@@ -90,6 +94,33 @@ export default async function MainPage() {
             </div>
           );
         })}
+      </div>
+
+      {/* 診断・改善への導線 */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        <Link href="/main/audit" className="bg-white rounded-3xl border border-[#eadfe7] p-6 hover:border-[var(--opt-accent)] transition-colors">
+          <div className="flex items-center gap-2 mb-3">
+            <Stethoscope size={16} style={{ color: 'var(--opt-accent)' }} />
+            <span className="text-xs font-black opacity-60">サイト診断（AIOスコア）</span>
+          </div>
+          <p className="text-4xl font-black">{audit ? audit.score : '—'}</p>
+          <p className="text-[11px] font-bold opacity-50 mt-2">
+            {audit ? 'クリックして要改善項目を確認' : 'まだ未診断です。クリックして診断を実行'}
+          </p>
+        </Link>
+        <Link href="/main/actions" className="bg-white rounded-3xl border border-[#eadfe7] p-6 hover:border-[var(--opt-accent)] transition-colors">
+          <div className="flex items-center gap-2 mb-3">
+            <Wrench size={16} style={{ color: 'var(--opt-accent)' }} />
+            <span className="text-xs font-black opacity-60">改善タスク</span>
+          </div>
+          <p className="text-4xl font-black">
+            {openActions}
+            <span className="text-sm opacity-40 ml-1">件 未実装</span>
+          </p>
+          <p className="text-[11px] font-bold opacity-50 mt-2">
+            {doneActions > 0 ? `実装済み ${doneActions}件 — 効果は言及率の推移で確認` : 'AIがスコアを上げる施策を成果物付きで生成します'}
+          </p>
+        </Link>
       </div>
 
       {/* 30日トレンド */}

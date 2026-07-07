@@ -52,6 +52,29 @@ export const ensureTables = (): Promise<void> => {
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_runs_project_idx ON pal_opt_runs (project_id, executed_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_runs_prompt_idx ON pal_opt_runs (prompt_id, executed_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_prompts_project_idx ON pal_opt_prompts (project_id)`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS pal_opt_audits (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES pal_opt_projects(id) ON DELETE CASCADE,
+          run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          score INTEGER NOT NULL DEFAULT 0,
+          checks JSONB NOT NULL DEFAULT '[]',
+          fetched_url TEXT
+        )`;
+      await sql`CREATE INDEX IF NOT EXISTS pal_opt_audits_project_idx ON pal_opt_audits (project_id, run_at DESC)`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS pal_opt_actions (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES pal_opt_projects(id) ON DELETE CASCADE,
+          category TEXT NOT NULL DEFAULT 'other',
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          deliverable TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          done_at TIMESTAMPTZ
+        )`;
+      await sql`CREATE INDEX IF NOT EXISTS pal_opt_actions_project_idx ON pal_opt_actions (project_id, status)`;
     })();
   }
   return ensured;
@@ -283,6 +306,142 @@ export const listRuns = async (
     ORDER BY r.executed_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...rowToRun(r), promptText: String(r.prompt_text) }));
+};
+
+// ---------- Audits ----------
+
+export type Audit = {
+  id: number;
+  projectId: number;
+  runAt: string;
+  score: number;
+  checks: unknown[];
+  fetchedUrl: string | null;
+};
+
+const rowToAudit = (r: Record<string, unknown>): Audit => ({
+  id: Number(r.id),
+  projectId: Number(r.project_id),
+  runAt: String(r.run_at),
+  score: Number(r.score),
+  checks: Array.isArray(r.checks) ? (r.checks as unknown[]) : [],
+  fetchedUrl: r.fetched_url ? String(r.fetched_url) : null,
+});
+
+export const insertAudit = async (projectId: number, score: number, checks: unknown[], fetchedUrl: string | null): Promise<Audit> => {
+  await ensureTables();
+  const { rows } = await sql`
+    INSERT INTO pal_opt_audits (project_id, score, checks, fetched_url)
+    VALUES (${projectId}, ${score}, ${JSON.stringify(checks)}, ${fetchedUrl})
+    RETURNING *`;
+  return rowToAudit(rows[0]);
+};
+
+export const getLatestAudit = async (projectId: number): Promise<Audit | null> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_audits WHERE project_id = ${projectId} ORDER BY run_at DESC LIMIT 1`;
+  return rows.length ? rowToAudit(rows[0]) : null;
+};
+
+export const getAuditHistory = async (projectId: number, limit = 12): Promise<Array<{ runAt: string; score: number }>> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT run_at, score FROM pal_opt_audits WHERE project_id = ${projectId} ORDER BY run_at DESC LIMIT ${limit}`;
+  return rows.map((r) => ({ runAt: String(r.run_at), score: Number(r.score) })).reverse();
+};
+
+/** 週次自動診断の対象（直近7日診断がない active プロジェクト） */
+export const listProjectsNeedingAudit = async (limit = 10): Promise<Project[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT pr.* FROM pal_opt_projects pr
+    WHERE pr.status = 'active' AND pr.site_url IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM pal_opt_audits a
+        WHERE a.project_id = pr.id AND a.run_at > NOW() - interval '7 days'
+      )
+    ORDER BY pr.id LIMIT ${limit}`;
+  return rows.map(rowToProject);
+};
+
+// ---------- Actions（改善タスク） ----------
+
+export type Action = {
+  id: number;
+  projectId: number;
+  category: string;
+  title: string;
+  description: string;
+  deliverable: string | null;
+  status: 'open' | 'done' | 'dismissed';
+  createdAt: string;
+  doneAt: string | null;
+};
+
+const rowToAction = (r: Record<string, unknown>): Action => ({
+  id: Number(r.id),
+  projectId: Number(r.project_id),
+  category: String(r.category),
+  title: String(r.title),
+  description: String(r.description ?? ''),
+  deliverable: r.deliverable ? String(r.deliverable) : null,
+  status: (['open', 'done', 'dismissed'].includes(String(r.status)) ? String(r.status) : 'open') as Action['status'],
+  createdAt: String(r.created_at),
+  doneAt: r.done_at ? String(r.done_at) : null,
+});
+
+export const listActions = async (projectId: number): Promise<Action[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_actions WHERE project_id = ${projectId}
+    ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'done' THEN 1 ELSE 2 END, created_at DESC`;
+  return rows.map(rowToAction);
+};
+
+export const insertActions = async (
+  projectId: number,
+  actions: Array<{ category: string; title: string; description: string; deliverable?: string | null }>,
+): Promise<number> => {
+  await ensureTables();
+  let inserted = 0;
+  for (const a of actions) {
+    const title = a.title.trim();
+    if (!title) continue;
+    const { rowCount } = await sql`
+      INSERT INTO pal_opt_actions (project_id, category, title, description, deliverable)
+      SELECT ${projectId}, ${a.category || 'other'}, ${title}, ${a.description || ''}, ${a.deliverable ?? null}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pal_opt_actions
+        WHERE project_id = ${projectId} AND title = ${title} AND status != 'dismissed'
+      )`;
+    inserted += rowCount ?? 0;
+  }
+  return inserted;
+};
+
+export const setActionStatus = async (projectId: number, actionId: number, status: Action['status']): Promise<void> => {
+  await ensureTables();
+  await sql`
+    UPDATE pal_opt_actions
+    SET status = ${status}, done_at = ${status === 'done' ? new Date().toISOString() : null}
+    WHERE id = ${actionId} AND project_id = ${projectId}`;
+};
+
+/** 直近14日でAIに言及されなかった質問（改善タスク生成の材料） */
+export const listMissedPrompts = async (projectId: number, limit = 8): Promise<Array<{ text: string; misses: number }>> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT p.text, count(*)::int AS misses
+    FROM pal_opt_runs r
+    JOIN pal_opt_prompts p ON p.id = r.prompt_id
+    WHERE r.project_id = ${projectId}
+      AND r.mentioned = false AND r.error IS NULL
+      AND r.executed_at > NOW() - interval '14 days'
+    GROUP BY p.text
+    ORDER BY misses DESC, p.text
+    LIMIT ${limit}`;
+  return rows.map((r) => ({ text: String(r.text), misses: Number(r.misses) }));
 };
 
 // ---------- Stats ----------

@@ -31,6 +31,12 @@ export default async function MainLayout({ children }: { children: React.ReactNo
               <Link href="/main/logs" className="opacity-70 hover:opacity-100 transition-opacity">
                 AI回答ログ
               </Link>
+              <Link href="/main/audit" className="opacity-70 hover:opacity-100 transition-opacity">
+                サイト診断
+              </Link>
+              <Link href="/main/actions" className="opacity-70 hover:opacity-100 transition-opacity">
+                改善タスク
+              </Link>
             </nav>
           </div>
           <div className="flex items-center gap-4">
