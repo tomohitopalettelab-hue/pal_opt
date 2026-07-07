@@ -444,6 +444,151 @@ export const listMissedPrompts = async (projectId: number, limit = 8): Promise<A
   return rows.map((r) => ({ text: String(r.text), misses: Number(r.misses) }));
 };
 
+// ---------- 競合SoV / 引用元 / 月次集計 ----------
+
+export type SovEntry = { name: string; mentions: number; isSelf: boolean };
+
+/** 自社と競合の言及回数（Share of Voice）。期間はJST日数。 */
+export const getShareOfVoice = async (projectId: number, days = 30): Promise<SovEntry[]> => {
+  await ensureTables();
+  const { rows: [self] } = await sql`
+    SELECT count(*) FILTER (WHERE mentioned)::int AS n
+    FROM pal_opt_runs
+    WHERE project_id = ${projectId} AND error IS NULL
+      AND executed_at > NOW() - (${days} || ' days')::interval`;
+  const { rows } = await sql`
+    SELECT jsonb_array_elements_text(competitors_mentioned) AS name, count(*)::int AS n
+    FROM pal_opt_runs
+    WHERE project_id = ${projectId} AND error IS NULL
+      AND executed_at > NOW() - (${days} || ' days')::interval
+    GROUP BY 1 ORDER BY 2 DESC LIMIT 10`;
+  const { rows: [proj] } = await sql`SELECT business_name FROM pal_opt_projects WHERE id = ${projectId}`;
+  return [
+    { name: String(proj?.business_name ?? '自社'), mentions: Number(self?.n ?? 0), isSelf: true },
+    ...rows.map((r) => ({ name: String(r.name), mentions: Number(r.n), isSelf: false })),
+  ].sort((a, b) => b.mentions - a.mentions);
+};
+
+/** AIが引用した情報源ドメインのトップ（サイテーション獲得の営業先リスト） */
+export const getTopCitations = async (projectId: number, days = 30): Promise<Array<{ domain: string; count: number }>> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT lower(c->>'title') AS domain, count(*)::int AS n
+    FROM pal_opt_runs r, jsonb_array_elements(r.citations) AS c
+    WHERE r.project_id = ${projectId} AND r.error IS NULL
+      AND r.executed_at > NOW() - (${days} || ' days')::interval
+      AND coalesce(c->>'title','') <> ''
+    GROUP BY 1 ORDER BY 2 DESC LIMIT 12`;
+  return rows.map((r) => ({ domain: String(r.domain), count: Number(r.n) }));
+};
+
+export type MonthlySummary = {
+  month: string; // YYYY-MM
+  totalRuns: number;
+  mentionedRuns: number;
+  citedRuns: number;
+  byEngine: Array<{ engine: string; total: number; mentioned: number }>;
+  bestAnswers: Array<{ promptText: string; engine: string; answerText: string; mentionPosition: number | null }>;
+  doneActions: Array<{ title: string; category: string; doneAt: string | null }>;
+  prevMentionRate: number | null; // 前月の言及率(%)
+};
+
+/** 月次レポート用の集計（JST月境界） */
+export const getMonthlySummary = async (projectId: number, month: string): Promise<MonthlySummary> => {
+  await ensureTables();
+  const start = `${month}-01`;
+
+  const { rows: [totals] } = await sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE mentioned)::int AS mentioned,
+           count(*) FILTER (WHERE cited)::int AS cited
+    FROM pal_opt_runs
+    WHERE project_id = ${projectId} AND error IS NULL
+      AND executed_at >= (${start}::date AT TIME ZONE 'Asia/Tokyo')
+      AND executed_at < ((${start}::date + interval '1 month') AT TIME ZONE 'Asia/Tokyo')`;
+  const { rows: engines } = await sql`
+    SELECT engine, count(*)::int AS total, count(*) FILTER (WHERE mentioned)::int AS mentioned
+    FROM pal_opt_runs
+    WHERE project_id = ${projectId} AND error IS NULL
+      AND executed_at >= (${start}::date AT TIME ZONE 'Asia/Tokyo')
+      AND executed_at < ((${start}::date + interval '1 month') AT TIME ZONE 'Asia/Tokyo')
+    GROUP BY engine ORDER BY engine`;
+  const { rows: best } = await sql`
+    SELECT p.text AS prompt_text, r.engine, r.answer_text, r.mention_position
+    FROM pal_opt_runs r JOIN pal_opt_prompts p ON p.id = r.prompt_id
+    WHERE r.project_id = ${projectId} AND r.mentioned = true AND r.error IS NULL
+      AND r.executed_at >= (${start}::date AT TIME ZONE 'Asia/Tokyo')
+      AND r.executed_at < ((${start}::date + interval '1 month') AT TIME ZONE 'Asia/Tokyo')
+    ORDER BY coalesce(r.mention_position, 99), r.executed_at DESC LIMIT 3`;
+  const { rows: doneActs } = await sql`
+    SELECT title, category, done_at FROM pal_opt_actions
+    WHERE project_id = ${projectId} AND status = 'done'
+      AND done_at >= (${start}::date AT TIME ZONE 'Asia/Tokyo')
+      AND done_at < ((${start}::date + interval '1 month') AT TIME ZONE 'Asia/Tokyo')
+    ORDER BY done_at`;
+  const { rows: [prev] } = await sql`
+    SELECT count(*)::int AS total, count(*) FILTER (WHERE mentioned)::int AS mentioned
+    FROM pal_opt_runs
+    WHERE project_id = ${projectId} AND error IS NULL
+      AND executed_at >= ((${start}::date - interval '1 month') AT TIME ZONE 'Asia/Tokyo')
+      AND executed_at < (${start}::date AT TIME ZONE 'Asia/Tokyo')`;
+
+  return {
+    month,
+    totalRuns: Number(totals?.total ?? 0),
+    mentionedRuns: Number(totals?.mentioned ?? 0),
+    citedRuns: Number(totals?.cited ?? 0),
+    byEngine: engines.map((r) => ({ engine: String(r.engine), total: Number(r.total), mentioned: Number(r.mentioned) })),
+    bestAnswers: best.map((r) => ({
+      promptText: String(r.prompt_text),
+      engine: String(r.engine),
+      answerText: String(r.answer_text),
+      mentionPosition: r.mention_position === null ? null : Number(r.mention_position),
+    })),
+    doneActions: doneActs.map((r) => ({ title: String(r.title), category: String(r.category), doneAt: r.done_at ? String(r.done_at) : null })),
+    prevMentionRate: Number(prev?.total ?? 0) > 0 ? Math.round((Number(prev.mentioned) / Number(prev.total)) * 100) : null,
+  };
+};
+
+// ---------- 管理者用 ----------
+
+export type AdminProjectStat = {
+  projectId: number;
+  paletteId: string;
+  businessName: string;
+  activePrompts: number;
+  runs7d: number;
+  mentioned7d: number;
+  errors7d: number;
+  lastRunAt: string | null;
+  auditScore: number | null;
+};
+
+export const listAllProjectStats = async (): Promise<AdminProjectStat[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT pr.id, pr.palette_id, pr.business_name,
+      (SELECT count(*)::int FROM pal_opt_prompts p WHERE p.project_id = pr.id AND p.active) AS active_prompts,
+      (SELECT count(*)::int FROM pal_opt_runs r WHERE r.project_id = pr.id AND r.executed_at > NOW() - interval '7 days') AS runs7d,
+      (SELECT count(*)::int FROM pal_opt_runs r WHERE r.project_id = pr.id AND r.mentioned AND r.error IS NULL AND r.executed_at > NOW() - interval '7 days') AS mentioned7d,
+      (SELECT count(*)::int FROM pal_opt_runs r WHERE r.project_id = pr.id AND r.error IS NOT NULL AND r.executed_at > NOW() - interval '7 days') AS errors7d,
+      (SELECT max(r.executed_at) FROM pal_opt_runs r WHERE r.project_id = pr.id) AS last_run_at,
+      (SELECT a.score FROM pal_opt_audits a WHERE a.project_id = pr.id ORDER BY a.run_at DESC LIMIT 1) AS audit_score
+    FROM pal_opt_projects pr
+    ORDER BY pr.id`;
+  return rows.map((r) => ({
+    projectId: Number(r.id),
+    paletteId: String(r.palette_id),
+    businessName: String(r.business_name),
+    activePrompts: Number(r.active_prompts),
+    runs7d: Number(r.runs7d),
+    mentioned7d: Number(r.mentioned7d),
+    errors7d: Number(r.errors7d),
+    lastRunAt: r.last_run_at ? String(r.last_run_at) : null,
+    auditScore: r.audit_score === null ? null : Number(r.audit_score),
+  }));
+};
+
 // ---------- Stats ----------
 
 export type DailyStat = {

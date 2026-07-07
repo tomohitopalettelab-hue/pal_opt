@@ -171,7 +171,8 @@ POST /api/cron/analyze   … 軽量LLMで回答を解析
 
 - **Phase 0: 旧機能の依存整理** ✅完了(2026-07-07)
 - **Phase 1 (MVP・無料構成)** ✅完了(2026-07-07・本番稼働): プロジェクト設定・プロンプト自動提案・**Gemini(無料枠grounding)＋ChatGPT(検索なし)の2エンジン計測**・解析・ダッシュボード・AI回答ログ・認証(HMAC化)。cronはGitHub ActionsでなくVercel Cron採用(毎日3時JST・CRON_SECRET自動Bearer)
-- **Phase 2**: 競合SoV・SEO観測(GSC OAuth連携)・サイト診断（AIOスコア）。受注が付き次第DataForSEO追加(AI Overview・競合順位)
+- **Phase 2（診断＋改善）** ✅完了(2026-07-07・本番稼働): サイト診断（AIOスコア約20項目・週次自動）・改善タスク自動生成（LocalBusiness JSON-LD/robots修正/**言及されなかった質問に答えるFAQ文案+FAQPage構造化データ**/コンテンツ施策）・実装ステータス管理（実装済み→言及率推移で効果検証）
+- **Phase 2残**: 競合SoV・SEO観測(GSC OAuth連携)。受注が付き次第DataForSEO追加(AI Overview・競合順位)。**Gemini無料枠は1日20〜30件程度で429になることが判明** → 顧客が増えたらGoogleプロジェクトの課金有効化（有効化後もgrounding 1,500件/日まで無料）
 - **Phase 3**: MEO統合（GBP OAuth流用・口コミ・ローカル順位）・改善タスク自動生成・月次レポートPDF
 - **Phase 4**: 施策実行支援（JSON-LD生成・FAQ案・GBP投稿/口コミ返信の自動化）・Pal Trust口コミ連携の再接続・**Pal Studio連携**（改善タスク→Studio管理サイトへの自動実装。AIがFAQ/コンテンツを生成しStudio側に直接反映するパイプライン。競合ツールにない差別化ポイント）
 

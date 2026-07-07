@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Radar, Quote, TrendingUp, Stethoscope, Wrench } from 'lucide-react';
 import { getSession } from '@/lib/session-server';
-import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts, getLatestAudit, listActions } from '@/lib/db';
+import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts, getLatestAudit, listActions, getShareOfVoice } from '@/lib/db';
 import { ENGINE_LABELS, type Engine } from '@/lib/engines';
 import Onboarding from './Onboarding';
 
@@ -16,12 +16,13 @@ export default async function MainPage() {
   const project = await getProjectByPaletteId(session.paletteId);
   if (!project) return <Onboarding />;
 
-  const [stats, recentRuns, prompts, audit, actions] = await Promise.all([
+  const [stats, recentRuns, prompts, audit, actions, sov] = await Promise.all([
     getDailyStats(project.id, 30),
     listRuns(project.id, { limit: 6 }),
     listPrompts(project.id),
     getLatestAudit(project.id),
     listActions(project.id),
+    getShareOfVoice(project.id, 30),
   ]);
   const openActions = actions.filter((a) => a.status === 'open').length;
   const doneActions = actions.filter((a) => a.status === 'done').length;
@@ -149,6 +150,39 @@ export default async function MainPage() {
           </div>
         )}
       </div>
+
+      {/* 競合Share of Voice */}
+      {(() => {
+        const sovTotal = sov.reduce((a, s) => a + s.mentions, 0);
+        if (sovTotal === 0) return null;
+        return (
+          <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
+            <p className="text-xs font-black opacity-60 mb-1">Share of Voice（直近30日）</p>
+            <p className="text-[10px] font-bold opacity-40 mb-4">AIの回答の中で自社と競合が言及された回数</p>
+            <div className="space-y-2.5">
+              {sov.map((s) => {
+                const share = Math.round((s.mentions / sovTotal) * 100);
+                return (
+                  <div key={s.name} className="flex items-center gap-3">
+                    <span className={`text-xs w-44 shrink-0 truncate ${s.isSelf ? 'font-black' : 'font-bold opacity-60'}`}>
+                      {s.isSelf ? `★ ${s.name}` : s.name}
+                    </span>
+                    <div className="flex-1 h-3.5 rounded-full bg-[#f2ecf1] overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${share}%`, background: s.isSelf ? 'var(--opt-accent)' : '#c4b2c0' }}
+                      />
+                    </div>
+                    <span className="text-xs font-black w-24 text-right">
+                      {s.mentions}回（{share}%）
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 最新のAI回答 */}
       <div>
