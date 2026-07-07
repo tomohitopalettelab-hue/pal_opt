@@ -1,90 +1,161 @@
-import { cookies } from 'next/headers';
-import { SESSION_COOKIE, parseSessionValue } from '@/lib/auth-session';
-import { Sparkles, Radar, Stethoscope, Wrench, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { Radar, Quote, TrendingUp } from 'lucide-react';
+import { getSession } from '@/lib/session-server';
+import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts } from '@/lib/db';
+import { ENGINE_LABELS, type Engine } from '@/lib/engines';
+import Onboarding from './Onboarding';
 
 export const dynamic = 'force-dynamic';
 
-const PILLARS = [
-  {
-    icon: Radar,
-    title: 'AI可視性の観測',
-    body: 'ChatGPT・Gemini などのAI検索で、あなたのお店・会社がどう答えられているかを毎日定点観測します。',
-  },
-  {
-    icon: Stethoscope,
-    title: 'サイト診断',
-    body: 'AIに引用されやすいサイトかを約30項目で自動診断し、AIOスコアとして見える化します。',
-  },
-  {
-    icon: Wrench,
-    title: '改善の実装',
-    body: '構造化データ・FAQ・GBP運用まで、AIに選ばれるための施策を実装し、効果を数字で検証します。',
-  },
-];
+const pct = (num: number, den: number): string => (den > 0 ? `${Math.round((num / den) * 100)}%` : '—');
 
 export default async function MainPage() {
-  const cookieStore = await cookies();
-  const session = await parseSessionValue(cookieStore.get(SESSION_COOKIE)?.value);
-  const displayName = session?.accountName || session?.paletteId || '';
+  const session = await getSession();
+  if (!session) return null; // middlewareでリダイレクト済み
+
+  const project = await getProjectByPaletteId(session.paletteId);
+  if (!project) return <Onboarding />;
+
+  const [stats, recentRuns, prompts] = await Promise.all([
+    getDailyStats(project.id, 30),
+    listRuns(project.id, { limit: 6 }),
+    listPrompts(project.id),
+  ]);
+
+  const activePrompts = prompts.filter((p) => p.active).length;
+  const last7 = stats.filter((s) => s.day >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10));
+  const byEngine = (engine: string) => {
+    const rows = last7.filter((s) => s.engine === engine);
+    const total = rows.reduce((a, r) => a + r.total, 0);
+    const mentioned = rows.reduce((a, r) => a + r.mentioned, 0);
+    const cited = rows.reduce((a, r) => a + r.cited, 0);
+    return { total, mentioned, cited };
+  };
+  const overall = {
+    total: last7.reduce((a, r) => a + r.total, 0),
+    mentioned: last7.reduce((a, r) => a + r.mentioned, 0),
+  };
+
+  // 30日推移（日別言及率）
+  const dayMap = new Map<string, { total: number; mentioned: number }>();
+  for (const s of stats) {
+    const cur = dayMap.get(s.day) ?? { total: 0, mentioned: 0 };
+    cur.total += s.total;
+    cur.mentioned += s.mentioned;
+    dayMap.set(s.day, cur);
+  }
+  const trend = [...dayMap.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).slice(-30);
 
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#eadfe7]">
-        <div className="flex items-center gap-2">
-          <Sparkles size={20} style={{ color: 'var(--opt-accent)' }} />
-          <span className="text-lg font-black tracking-tight">Pal Opt</span>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: 'var(--opt-accent)' }}>
-            AIO
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-xs font-bold opacity-60">{displayName}</span>
-          <a
-            href="/api/auth/logout"
-            className="flex items-center gap-1.5 text-xs font-bold opacity-60 hover:opacity-100 transition-opacity"
-          >
-            <LogOut size={14} /> ログアウト
-          </a>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-6 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-2xl font-black mb-3">AI検索最適化ダッシュボード</h1>
-          <p className="text-sm font-bold opacity-60 leading-relaxed">
-            Pal Opt は生まれ変わりました。AIにあなたのビジネスが
-            <br className="hidden sm:block" />
-            どう紹介されているかを観測し、「AIに選ばれる状態」を作ります。
+    <div className="space-y-8">
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-xl font-black">{project.businessName}</h1>
+          <p className="text-xs font-bold opacity-50 mt-1">
+            {[project.industry, project.area].filter(Boolean).join(' / ') || 'AI可視性ダッシュボード'} ・
+            観測中プロンプト {activePrompts}件
           </p>
         </div>
+        <Link href="/main/logs" className="text-xs font-bold underline opacity-60 hover:opacity-100">
+          回答ログを見る →
+        </Link>
+      </div>
 
-        <div className="grid sm:grid-cols-3 gap-4 mb-12">
-          {PILLARS.map(({ icon: Icon, title, body }) => (
-            <div key={title} className="bg-white rounded-3xl border border-[#eadfe7] p-6">
-              <div
-                className="w-10 h-10 rounded-2xl flex items-center justify-center mb-4"
-                style={{ background: 'var(--opt-accent-light)' }}
-              >
-                <Icon size={18} style={{ color: 'var(--opt-accent)' }} />
+      {/* スコアカード */}
+      <div className="grid sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Radar size={16} style={{ color: 'var(--opt-accent)' }} />
+            <span className="text-xs font-black opacity-60">AI可視性スコア（直近7日）</span>
+          </div>
+          <p className="text-4xl font-black" style={{ color: 'var(--opt-accent-dark)' }}>
+            {pct(overall.mentioned, overall.total)}
+          </p>
+          <p className="text-[11px] font-bold opacity-50 mt-2">
+            AIの回答 {overall.total}件中 {overall.mentioned}件で言及
+          </p>
+        </div>
+        {(Object.keys(ENGINE_LABELS) as Engine[]).map((engine) => {
+          const e = byEngine(engine);
+          return (
+            <div key={engine} className="bg-white rounded-3xl border border-[#eadfe7] p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp size={16} className="opacity-40" />
+                <span className="text-xs font-black opacity-60">{ENGINE_LABELS[engine]}</span>
               </div>
-              <h2 className="text-sm font-black mb-2">{title}</h2>
-              <p className="text-xs font-bold opacity-60 leading-relaxed">{body}</p>
+              <p className="text-4xl font-black">{pct(e.mentioned, e.total)}</p>
+              <p className="text-[11px] font-bold opacity-50 mt-2">
+                言及 {e.mentioned}/{e.total} ・ 自社サイト引用 {e.cited}件
+              </p>
             </div>
-          ))}
-        </div>
+          );
+        })}
+      </div>
 
-        <div
-          className="rounded-3xl border p-8 text-center"
-          style={{ background: 'var(--opt-accent-light)', borderColor: '#e5c7db' }}
-        >
-          <p className="text-sm font-black mb-1" style={{ color: 'var(--opt-accent-dark)' }}>
-            計測の準備を進めています
+      {/* 30日トレンド */}
+      <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
+        <p className="text-xs font-black opacity-60 mb-4">言及率の推移（30日）</p>
+        {trend.length === 0 ? (
+          <p className="text-sm font-bold opacity-40 py-8 text-center">
+            まだ計測データがありません。観測は毎日自動で実行されます。
           </p>
-          <p className="text-xs font-bold opacity-60">
-            観測プロンプトの初期設定が完了すると、ここにAI可視性スコアが表示されます。
-          </p>
+        ) : (
+          <div className="flex items-end gap-1 h-28">
+            {trend.map(([day, v]) => {
+              const rate = v.total > 0 ? v.mentioned / v.total : 0;
+              return (
+                <div key={day} className="flex-1 flex flex-col justify-end group relative">
+                  <div
+                    className="rounded-t-md min-h-[2px] transition-all"
+                    style={{ height: `${Math.max(rate * 100, 2)}%`, background: 'var(--opt-accent)' , opacity: v.total ? 1 : 0.15 }}
+                  />
+                  <span className="hidden group-hover:block absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-black text-white rounded px-1.5 py-0.5 whitespace-nowrap">
+                    {day.slice(5)}: {Math.round(rate * 100)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 最新のAI回答 */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Quote size={16} style={{ color: 'var(--opt-accent)' }} />
+          <h2 className="text-sm font-black">最新のAI回答</h2>
         </div>
-      </main>
+        {recentRuns.length === 0 ? (
+          <div className="rounded-3xl border p-8 text-center" style={{ background: 'var(--opt-accent-light)', borderColor: '#e5c7db' }}>
+            <p className="text-sm font-black mb-1" style={{ color: 'var(--opt-accent-dark)' }}>
+              初回計測は本日深夜に自動実行されます
+            </p>
+            <p className="text-xs font-bold opacity-60">
+              観測プロンプトは「観測プロンプト」タブで確認・調整できます。
+            </p>
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {recentRuns.map((run) => (
+              <div key={run.id} className="bg-white rounded-3xl border border-[#eadfe7] p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#f2ecf1] opacity-70">
+                    {ENGINE_LABELS[run.engine as Engine] ?? run.engine}
+                  </span>
+                  <span
+                    className="text-[10px] font-black px-2 py-0.5 rounded-full text-white"
+                    style={{ background: run.mentioned ? 'var(--opt-accent)' : '#b9aab5' }}
+                  >
+                    {run.mentioned ? `言及あり${run.mentionPosition ? ` (${run.mentionPosition}位)` : ''}` : '言及なし'}
+                  </span>
+                </div>
+                <p className="text-xs font-black mb-2 opacity-80">Q. {run.promptText}</p>
+                <p className="text-xs font-medium opacity-60 leading-relaxed line-clamp-4">{run.answerText || run.error}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
