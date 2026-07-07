@@ -1,16 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" font-family="'Segoe UI','Hiragino Sans',sans-serif">
-  <!-- Pal Opt 横組みロックアップ -->
+  <!-- Pal Opt 横組みロックアップ（確定版・案A: 観測レーダー） -->
   <defs>
-    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#B92B96"/>
-      <stop offset="1" stop-color="#8A1A6D"/>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B92B96"/><stop offset="1" stop-color="#8A1A6D"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="18" width="84" height="84" rx="22" fill="url(#bg2)"/>
-  <circle cx="50" cy="60" r="26" fill="none" stroke="#F5E6F0" stroke-opacity="0.35" stroke-width="2.5"
-          stroke-dasharray="30 11" stroke-linecap="round"/>
-  <path fill="#FFFFFF" d="M50 39c1.7 9.5 6.3 15.3 18 17.2-11.7 2-16.3 7.8-18 17.3-1.7-9.5-6.3-15.3-18-17.3 11.7-1.9 16.3-7.7 18-17.2z"/>
-  <path fill="#F5E6F0" d="M68 42c0.7 3.6 2.4 5.9 6.8 6.6-4.4 0.8-6.1 3-6.8 6.6-0.7-3.6-2.4-5.8-6.8-6.6 4.4-0.7 6.1-3 6.8-6.6z"/>
+  <rect x="8" y="18" width="84" height="84" rx="22" fill="url(#g2)"/>
+  <circle cx="50" cy="60" r="11" fill="none" stroke="#FFFFFF" stroke-width="4.5"/>
+  <circle cx="50" cy="60" r="22" fill="none" stroke="#F5E6F0" stroke-opacity="0.55" stroke-width="3.5"
+          stroke-dasharray="19 8" stroke-linecap="round"/>
+  <circle cx="50" cy="60" r="32" fill="none" stroke="#F5E6F0" stroke-opacity="0.25" stroke-width="3.5"
+          stroke-dasharray="13 10" stroke-linecap="round"/>
+  <circle cx="72" cy="38" r="5.5" fill="#FFFFFF"/>
   <text x="110" y="72" font-size="44" font-weight="800" fill="#2A1F27" letter-spacing="-1">Pal <tspan fill="#A62183">Opt</tspan></text>
   <text x="112" y="96" font-size="14" font-weight="700" fill="#2A1F27" opacity="0.45" letter-spacing="3">AIO × SEO × MEO</text>
 </svg>
