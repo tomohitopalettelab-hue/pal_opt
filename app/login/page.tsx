@@ -1,104 +1,96 @@
-"use client";
+'use client';
 
-import { Suspense, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Loader2, Sparkles } from 'lucide-react';
 
-function LoginPageInner() {
+export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const next = useMemo(() => searchParams.get('next') || undefined, [searchParams]);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
+    setLoading(true);
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'admin', id, password, next }),
+        body: JSON.stringify({ id, password }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setError(data?.error || 'ログインに失敗しました。');
+        setLoading(false);
         return;
       }
-      router.push(data.redirectTo || '/admin');
-      router.refresh();
+      router.push('/main');
     } catch {
       setError('通信エラーが発生しました。');
-    } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-[#F5F0F4] flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-slate-200 p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#A62183' }}>
-            <span className="text-white text-xs font-black">PO</span>
+    <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center gap-2 mb-2">
+            <Sparkles size={28} style={{ color: 'var(--opt-accent)' }} />
+            <h1 className="text-3xl font-black tracking-tight">Pal Opt</h1>
           </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-800 leading-none">pal opt</h1>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">運用最適化</p>
-          </div>
+          <p className="text-sm font-bold opacity-60">AI検索最適化 — AIO × SEO × MEO</p>
         </div>
-        <p className="text-xs text-slate-500 mb-5">管理者ログイン</p>
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form
+          onSubmit={handleSubmit}
+          className="bg-white rounded-3xl border border-[#eadfe7] shadow-sm p-8 space-y-5"
+        >
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">ID</label>
+            <label className="block text-xs font-bold opacity-60 mb-1.5">ログインID</label>
             <input
+              type="text"
               value={id}
               onChange={(e) => setId(e.target.value)}
-              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none"
-              onFocus={(e) => (e.target.style.boxShadow = '0 0 0 2px #A6218340')}
-              onBlur={(e) => (e.target.style.boxShadow = '')}
-              placeholder="admin id"
+              autoComplete="username"
+              className="w-full px-4 py-3 rounded-xl border border-[#e5d5e1] bg-[#fdfbfd] focus:outline-none focus:border-[var(--opt-accent)] text-sm"
+              placeholder="ログインID"
             />
           </div>
-
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">Password</label>
+            <label className="block text-xs font-bold opacity-60 mb-1.5">パスワード</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none"
-              onFocus={(e) => (e.target.style.boxShadow = '0 0 0 2px #A6218340')}
-              onBlur={(e) => (e.target.style.boxShadow = '')}
-              placeholder="password"
+              autoComplete="current-password"
+              className="w-full px-4 py-3 rounded-xl border border-[#e5d5e1] bg-[#fdfbfd] focus:outline-none focus:border-[var(--opt-accent)] text-sm"
+              placeholder="パスワード"
             />
           </div>
 
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          {error && (
+            <p className="text-xs font-bold text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+          )}
 
           <button
             type="submit"
-            disabled={isLoading}
-            className="w-full py-2.5 rounded-lg text-white text-sm font-bold disabled:opacity-60 transition-opacity"
-            style={{ backgroundColor: '#A62183' }}
-            onMouseEnter={(e) => { if (!isLoading) (e.target as HTMLButtonElement).style.backgroundColor = '#8a1a6d'; }}
-            onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.backgroundColor = '#A62183'; }}
+            disabled={loading || !id || !password}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-white text-sm font-black transition-opacity disabled:opacity-40"
+            style={{ background: 'var(--opt-accent)' }}
           >
-            {isLoading ? 'ログイン中...' : 'ログイン'}
+            {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+            {loading ? 'ログイン中...' : 'ログイン'}
           </button>
         </form>
-      </div>
-    </main>
-  );
-}
 
-export default function LoginPage() {
-  return (
-    <Suspense fallback={<main className="min-h-screen bg-[#F5F0F4]" />}>
-      <LoginPageInner />
-    </Suspense>
+        <p className="text-center text-[11px] font-bold opacity-40 mt-6">
+          Palette Lab — Pal Opt
+        </p>
+      </div>
+    </div>
   );
 }

@@ -1,3 +1,7 @@
+/**
+ * pal_db proxy（palette_crm /api/pal-db）へのHTTPクライアント。
+ * 顧客認証(verify-chat-login)・契約照合(palette-services)に使用。
+ */
 const getBaseUrl = (): string => process.env.PAL_DB_BASE_URL?.trim() || 'http://localhost:3100';
 
 export const buildPalDbUrl = (path: string): string => {

@@ -1,26 +1,15 @@
-import type { Metadata, Viewport } from "next";
-import "./globals.css";
+import type { Metadata } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Pal Opt",
-  description: "運用最適化 - SNS・SEO・MEO実行代行",
+  title: 'Pal Opt — AI検索最適化 (AIO)',
+  description: 'ChatGPT・Gemini・Google AI検索での見え方を観測し、AIに選ばれる状態を作るAIO×SEO×MEO統合サービス',
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-};
-
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
