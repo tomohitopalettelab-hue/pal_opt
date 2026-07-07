@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Sparkles, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { getSession } from '@/lib/session-server';
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
@@ -12,7 +12,8 @@ export default async function MainLayout({ children }: { children: React.ReactNo
         <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <Link href="/main" className="flex items-center gap-2">
-              <Sparkles size={20} style={{ color: 'var(--opt-accent)' }} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo-mark.svg" alt="" width={26} height={26} />
               <span className="text-lg font-black tracking-tight">Pal Opt</span>
               <span
                 className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"

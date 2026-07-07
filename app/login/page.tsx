@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -38,8 +38,9 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-2">
-            <Sparkles size={28} style={{ color: 'var(--opt-accent)' }} />
+          <div className="inline-flex items-center gap-3 mb-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-mark.svg" alt="Pal Opt" width={40} height={40} />
             <h1 className="text-3xl font-black tracking-tight">Pal Opt</h1>
           </div>
           <p className="text-sm font-bold opacity-60">AI検索最適化 — AIO × SEO × MEO</p>
