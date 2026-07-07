@@ -75,6 +75,9 @@ export const ensureTables = (): Promise<void> => {
           done_at TIMESTAMPTZ
         )`;
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_actions_project_idx ON pal_opt_actions (project_id, status)`;
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`;
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS gbp_location TEXT`;
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS gsc_site TEXT`;
     })();
   }
   return ensured;
@@ -90,6 +93,9 @@ export type Project = {
   area: string | null;
   competitors: string[];
   status: string;
+  googleConnected: boolean;
+  gbpLocation: string | null;
+  gscSite: string | null;
 };
 
 export type Prompt = {
@@ -132,7 +138,36 @@ const rowToProject = (r: Record<string, unknown>): Project => ({
   area: r.area ? String(r.area) : null,
   competitors: toStringArray(r.competitors),
   status: String(r.status),
+  googleConnected: Boolean(r.google_refresh_token),
+  gbpLocation: r.gbp_location ? String(r.gbp_location) : null,
+  gscSite: r.gsc_site ? String(r.gsc_site) : null,
 });
+
+/** Google連携情報の保存（refresh tokenは上書きのみ・nullで解除） */
+export const setProjectGoogleToken = async (projectId: number, refreshToken: string | null): Promise<void> => {
+  await ensureTables();
+  await sql`UPDATE pal_opt_projects SET google_refresh_token = ${refreshToken}, updated_at = NOW() WHERE id = ${projectId}`;
+};
+
+export const setProjectGoogleSelection = async (
+  projectId: number,
+  sel: { gbpLocation?: string | null; gscSite?: string | null },
+): Promise<void> => {
+  await ensureTables();
+  if (sel.gbpLocation !== undefined) {
+    await sql`UPDATE pal_opt_projects SET gbp_location = ${sel.gbpLocation}, updated_at = NOW() WHERE id = ${projectId}`;
+  }
+  if (sel.gscSite !== undefined) {
+    await sql`UPDATE pal_opt_projects SET gsc_site = ${sel.gscSite}, updated_at = NOW() WHERE id = ${projectId}`;
+  }
+};
+
+/** サーバー内部専用: refresh token取得（APIレスポンスに載せないこと） */
+export const getProjectGoogleToken = async (projectId: number): Promise<string | null> => {
+  await ensureTables();
+  const { rows } = await sql`SELECT google_refresh_token FROM pal_opt_projects WHERE id = ${projectId}`;
+  return rows[0]?.google_refresh_token ? String(rows[0].google_refresh_token) : null;
+};
 
 const rowToPrompt = (r: Record<string, unknown>): Prompt => ({
   id: Number(r.id),
