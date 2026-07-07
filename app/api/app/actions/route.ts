@@ -11,6 +11,8 @@ import {
 } from '@/lib/db';
 import { runAudit, type AuditCheck } from '@/lib/audit';
 import { generateActions } from '@/lib/actions-gen';
+import { getProjectGoogleToken } from '@/lib/db';
+import { refreshAccessToken, getGscOpportunities } from '@/lib/google';
 
 export const maxDuration = 120;
 
@@ -44,6 +46,25 @@ export async function POST() {
 
   const missed = await listMissedPrompts(project.id);
   const generated = await generateActions(project, (audit?.checks ?? []) as AuditCheck[], missed);
+
+  // GSC連携済みなら「惜しいクエリ」からSEOタスクを追加（無料・実測ベース）
+  if (project.googleConnected && project.gscSite) {
+    try {
+      const refreshToken = await getProjectGoogleToken(project.id);
+      const token = await refreshAccessToken(refreshToken || '');
+      const opps = await getGscOpportunities(token, project.gscSite);
+      for (const o of opps) {
+        generated.push({
+          category: 'seo',
+          title: `検索クエリ「${o.query}」の順位を押し上げる`,
+          description: `${o.reason}（直近28日: 表示${o.impressions}回・クリック${o.clicks}回・平均${o.position}位）。このクエリに正面から答える見出し・本文の追記、またはタイトル/メタディスクリプションの改善が有効です。下の記事化ボタンでStudioに下書きを作れます。`,
+        });
+      }
+    } catch {
+      /* GSC取得失敗時はスキップ（他タスクは生成継続） */
+    }
+  }
+
   const inserted = await insertActions(project.id, generated);
   const actions = await listActions(project.id);
   return NextResponse.json({ success: true, inserted, actions });

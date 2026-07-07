@@ -148,7 +148,35 @@ export type GscSummary = {
   topQueries: GscQueryRow[];
 };
 
-export const getGscSummary = async (token: string, siteUrl: string, days = 28): Promise<GscSummary> => {
+/** 「惜しいクエリ」= 4〜20位で表示がある or 表示多いのにCTRが低いクエリ（SEO改善タスクの材料） */
+export const getGscOpportunities = async (
+  token: string,
+  siteUrl: string,
+): Promise<Array<{ query: string; position: number; impressions: number; clicks: number; reason: string }>> => {
+  const s = await getGscSummaryRows(token, siteUrl, 28, 100);
+  const out: Array<{ query: string; position: number; impressions: number; clicks: number; reason: string }> = [];
+  for (const r of s) {
+    if (r.position >= 4 && r.position <= 20 && r.impressions >= 10) {
+      out.push({ ...r, reason: `平均${r.position}位。1ページ目上位に押し上げる余地あり` });
+    } else if (r.position < 4 && r.impressions >= 50 && r.clicks / Math.max(r.impressions, 1) < 0.02) {
+      out.push({ ...r, reason: `上位表示なのにCTR${Math.round((r.clicks / r.impressions) * 100)}%。タイトル/説明文の魅力不足` });
+    }
+    if (out.length >= 5) break;
+  }
+  return out;
+};
+
+const getGscSummaryRows = async (
+  token: string,
+  siteUrl: string,
+  days: number,
+  rowLimit: number,
+): Promise<GscQueryRow[]> => {
+  const data = await getGscSummary(token, siteUrl, days, rowLimit);
+  return data.topQueries;
+};
+
+export const getGscSummary = async (token: string, siteUrl: string, days = 28, rowLimit = 20): Promise<GscSummary> => {
   const end = new Date(Date.now() - 2 * 864e5); // GSCは2日遅れ
   const start = new Date(end.getTime() - days * 864e5);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
@@ -157,7 +185,7 @@ export const getGscSummary = async (token: string, siteUrl: string, days = 28): 
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ startDate: fmt(start), endDate: fmt(end), dimensions: ['query'], rowLimit: 20 }),
+      body: JSON.stringify({ startDate: fmt(start), endDate: fmt(end), dimensions: ['query'], rowLimit }),
     },
   );
   const data = (await res.json()) as {

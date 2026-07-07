@@ -10,6 +10,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   robots: 'AIクローラー',
   meta: 'サイト基本設定',
   content: 'コンテンツ施策',
+  seo: 'SEO（惜しいクエリ）',
   other: 'その他',
 };
 
@@ -119,7 +120,7 @@ export default function ActionList({ initialActions }: { initialActions: Action[
       </summary>
       <div className="mt-3 pt-3 border-t border-[#f2ecf1]">
         <p className="text-xs font-bold opacity-70 leading-relaxed">{a.description}</p>
-        {(a.category === 'content' || a.category === 'faq') && a.status === 'open' && (
+        {(a.category === 'content' || a.category === 'faq' || a.category === 'seo') && a.status === 'open' && (
           <div className="mt-2.5">
             <button
               onClick={() => sendToStudio(a.id)}
