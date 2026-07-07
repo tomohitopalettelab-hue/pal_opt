@@ -79,11 +79,13 @@ export const listGbpLocations = async (token: string): Promise<GbpLocation[]> =>
 };
 
 export type GbpReview = {
+  reviewId: string;
   reviewer: string;
   starRating: number;
   comment: string;
   createTime: string;
   hasReply: boolean;
+  replyComment: string | null;
 };
 
 export type GbpSummary = {
@@ -98,28 +100,31 @@ const STAR_MAP: Record<string, number> = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FI
 export const getGbpSummary = async (token: string, locationName: string): Promise<GbpSummary> => {
   const data = await gget<{
     reviews?: Array<{
+      reviewId?: string;
       reviewer?: { displayName?: string };
       starRating?: string;
       comment?: string;
       createTime?: string;
-      reviewReply?: unknown;
+      reviewReply?: { comment?: string };
     }>;
     averageRating?: number;
     totalReviewCount?: number;
   }>(token, `https://mybusiness.googleapis.com/v4/${locationName}/reviews?pageSize=50`);
 
   const reviews = (data.reviews ?? []).map((r) => ({
+    reviewId: r.reviewId || '',
     reviewer: r.reviewer?.displayName || '匿名',
     starRating: STAR_MAP[r.starRating || ''] ?? 0,
     comment: r.comment || '',
     createTime: r.createTime || '',
     hasReply: Boolean(r.reviewReply),
+    replyComment: r.reviewReply?.comment || null,
   }));
   return {
     averageRating: data.averageRating ?? null,
     totalReviewCount: data.totalReviewCount ?? reviews.length,
     unreplied: reviews.filter((r) => !r.hasReply).length,
-    recent: reviews.slice(0, 5),
+    recent: reviews.slice(0, 20),
   };
 };
 

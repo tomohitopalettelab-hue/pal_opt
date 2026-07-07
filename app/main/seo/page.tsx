@@ -11,13 +11,131 @@ type GscData = {
   topQueries: Array<{ query: string; clicks: number; impressions: number; position: number }>;
   error?: string;
 };
+type Review = {
+  reviewId: string;
+  reviewer: string;
+  starRating: number;
+  comment: string;
+  createTime: string;
+  hasReply: boolean;
+  replyComment: string | null;
+};
 type GbpData = {
   averageRating: number | null;
   totalReviewCount: number;
   unreplied: number;
-  recent: Array<{ reviewer: string; starRating: number; comment: string; createTime: string; hasReply: boolean }>;
+  recent: Review[];
   error?: string;
 };
+
+function ReviewCard({ review }: { review: Review }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState('');
+
+  const makeDraft = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      const res = await fetch('/api/app/gbp-reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer: review.reviewer, starRating: review.starRating, comment: review.comment }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) setErr(data?.error || '生成に失敗しました。');
+      else setDraft(data.draft);
+    } catch {
+      setErr('通信エラーが発生しました。');
+    }
+    setBusy(false);
+  };
+
+  const send = async () => {
+    if (!draft?.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const res = await fetch('/api/app/gbp-reviews', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewId: review.reviewId, comment: draft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) setErr(data?.error || '送信に失敗しました。');
+      else setSent(true);
+    } catch {
+      setErr('通信エラーが発生しました。');
+    }
+    setBusy(false);
+  };
+
+  const replied = review.hasReply || sent;
+
+  return (
+    <div className="bg-white rounded-3xl border border-[#eadfe7] px-6 py-4">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs font-black">
+          {review.reviewer}
+          <span className="ml-2" style={{ color: '#e8b931' }}>{'★'.repeat(review.starRating)}</span>
+        </p>
+        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${replied ? 'bg-[#eaf6f0] text-[#1a9e6e]' : 'bg-red-50 text-red-600'}`}>
+          {replied ? '返信済み' : '未返信'}
+        </span>
+      </div>
+      <p className="text-xs font-medium opacity-60 leading-relaxed">{review.comment || '（コメントなし）'}</p>
+
+      {replied && (review.replyComment || sent) && (
+        <p className="text-[11px] font-bold opacity-50 mt-2 pl-3 border-l-2 border-[#e5d5e1]">
+          返信: {sent && draft ? draft : review.replyComment}
+        </p>
+      )}
+
+      {!replied && (
+        <div className="mt-3">
+          {draft === null ? (
+            <button
+              onClick={makeDraft}
+              disabled={busy}
+              className="flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-full text-white disabled:opacity-40"
+              style={{ background: 'var(--opt-accent)' }}
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : null} AI返信案を作成
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2.5 rounded-xl border border-[#e5d5e1] bg-[#fdfbfd] focus:outline-none focus:border-[var(--opt-accent)] text-xs font-medium leading-relaxed"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={send}
+                  disabled={busy || !draft.trim()}
+                  className="flex items-center gap-1.5 text-[11px] font-black px-3.5 py-1.5 rounded-full text-white disabled:opacity-40"
+                  style={{ background: 'var(--opt-accent)' }}
+                >
+                  {busy ? <Loader2 size={11} className="animate-spin" /> : null} この内容で返信を送信
+                </button>
+                <button onClick={makeDraft} disabled={busy} className="text-[11px] font-bold underline opacity-50 hover:opacity-100">
+                  作り直す
+                </button>
+                <button onClick={() => setDraft(null)} disabled={busy} className="text-[11px] font-bold underline opacity-50 hover:opacity-100">
+                  キャンセル
+                </button>
+              </div>
+              <p className="text-[10px] font-bold opacity-40">送信するとGoogleマップ上にお店の公式返信として公開されます。内容を確認してから送信してください。</p>
+            </div>
+          )}
+          {err && <p className="text-[11px] font-bold text-red-600 mt-1.5">{err}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SeoMeoPage() {
   const [loading, setLoading] = useState(true);
@@ -152,20 +270,11 @@ export default function SeoMeoPage() {
               </div>
             </div>
             <div className="space-y-3">
-              {gbp.recent.map((r, i) => (
-                <div key={i} className="bg-white rounded-3xl border border-[#eadfe7] px-6 py-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs font-black">
-                      {r.reviewer}
-                      <span className="ml-2" style={{ color: '#e8b931' }}>{'★'.repeat(r.starRating)}</span>
-                    </p>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${r.hasReply ? 'bg-[#eaf6f0] text-[#1a9e6e]' : 'bg-red-50 text-red-600'}`}>
-                      {r.hasReply ? '返信済み' : '未返信'}
-                    </span>
-                  </div>
-                  <p className="text-xs font-medium opacity-60 leading-relaxed">{r.comment || '（コメントなし）'}</p>
-                </div>
-              ))}
+              {[...gbp.recent]
+                .sort((a, b) => Number(a.hasReply) - Number(b.hasReply))
+                .map((r) => (
+                  <ReviewCard key={r.reviewId || r.createTime} review={r} />
+                ))}
             </div>
           </>
         )}
