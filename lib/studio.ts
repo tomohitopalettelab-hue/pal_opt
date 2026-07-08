@@ -118,10 +118,10 @@ const studioConfig = (): { origin: string; apiKey: string; publicOrigin: string 
   return { origin, apiKey, publicOrigin };
 };
 
-/** ハブページの公開URL（Studio側ドメイン・モデルA） */
+/** ハブページの公開URL（Studio側ドメイン・モデルA）。pal_studio_v2 の /hub/{paletteId} */
 export const hubPublicUrl = (paletteId: string): string => {
   const { publicOrigin } = studioConfig();
-  return `${publicOrigin}/${encodeURIComponent(paletteId)}/aio-hub`;
+  return `${publicOrigin}/hub/${encodeURIComponent(paletteId)}`;
 };
 
 /**
