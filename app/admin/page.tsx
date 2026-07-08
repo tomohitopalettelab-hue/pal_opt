@@ -1,5 +1,6 @@
 import { listAllProjectStats } from '@/lib/db';
 import { ShieldCheck } from 'lucide-react';
+import ResetButton from './ResetButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,7 @@ export default async function AdminPage() {
                   <th className="px-5 py-3">エラー(7日)</th>
                   <th className="px-5 py-3">AIOスコア</th>
                   <th className="px-5 py-3">最終計測</th>
+                  <th className="px-5 py-3">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -54,6 +56,9 @@ export default async function AdminPage() {
                     <td className="px-5 py-3">{s.auditScore ?? '—'}</td>
                     <td className="px-5 py-3 text-[11px] opacity-60">
                       {s.lastRunAt ? new Date(s.lastRunAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '未計測'}
+                    </td>
+                    <td className="px-5 py-3">
+                      <ResetButton projectId={s.projectId} paletteId={s.paletteId} />
                     </td>
                   </tr>
                 ))}
