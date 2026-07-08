@@ -78,6 +78,26 @@ export const ensureTables = (): Promise<void> => {
       await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS google_refresh_token TEXT`;
       await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS gbp_location TEXT`;
       await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS gsc_site TEXT`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS pal_opt_notifications (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES pal_opt_projects(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          read_at TIMESTAMPTZ
+        )`;
+      await sql`CREATE INDEX IF NOT EXISTS pal_opt_notifications_project_idx ON pal_opt_notifications (project_id, created_at DESC)`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS pal_opt_articles (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES pal_opt_projects(id) ON DELETE CASCADE,
+          action_id INTEGER REFERENCES pal_opt_actions(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await sql`CREATE INDEX IF NOT EXISTS pal_opt_articles_project_idx ON pal_opt_articles (project_id, sent_at DESC)`;
     })();
   }
   return ensured;
@@ -589,6 +609,180 @@ export const getMonthlySummary = async (projectId: number, month: string): Promi
     doneActions: doneActs.map((r) => ({ title: String(r.title), category: String(r.category), doneAt: r.done_at ? String(r.done_at) : null })),
     prevMentionRate: Number(prev?.total ?? 0) > 0 ? Math.round((Number(prev.mentioned) / Number(prev.total)) * 100) : null,
   };
+};
+
+// ---------- Notifications（成果通知） ----------
+
+export type NotificationType = 'first_mention' | 'new_competitor' | 'first_citation';
+
+export type AppNotification = {
+  id: number;
+  projectId: number;
+  type: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+const rowToNotification = (r: Record<string, unknown>): AppNotification => ({
+  id: Number(r.id),
+  projectId: Number(r.project_id),
+  type: String(r.type),
+  title: String(r.title),
+  body: String(r.body ?? ''),
+  createdAt: String(r.created_at),
+  readAt: r.read_at ? String(r.read_at) : null,
+});
+
+/** 通知を挿入（重複防止: 同プロジェクト×同typeはJST同日1件まで） */
+export const insertNotificationOncePerDay = async (
+  projectId: number,
+  type: NotificationType,
+  title: string,
+  body: string,
+): Promise<boolean> => {
+  await ensureTables();
+  const { rowCount } = await sql`
+    INSERT INTO pal_opt_notifications (project_id, type, title, body)
+    SELECT ${projectId}, ${type}, ${title}, ${body}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM pal_opt_notifications
+      WHERE project_id = ${projectId} AND type = ${type}
+        AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+    )`;
+  return (rowCount ?? 0) > 0;
+};
+
+export const listNotifications = async (projectId: number, limit = 30): Promise<AppNotification[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_notifications
+    WHERE project_id = ${projectId}
+    ORDER BY created_at DESC LIMIT ${Math.min(Math.max(limit, 1), 100)}`;
+  return rows.map(rowToNotification);
+};
+
+export const getLatestUnreadNotification = async (projectId: number): Promise<AppNotification | null> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_notifications
+    WHERE project_id = ${projectId} AND read_at IS NULL
+    ORDER BY created_at DESC LIMIT 1`;
+  return rows.length ? rowToNotification(rows[0]) : null;
+};
+
+export const markAllNotificationsRead = async (projectId: number): Promise<void> => {
+  await ensureTables();
+  await sql`UPDATE pal_opt_notifications SET read_at = NOW() WHERE project_id = ${projectId} AND read_at IS NULL`;
+};
+
+// ---- 成果イベント検知（cron収集後に呼ぶ）。「本日」はJST日付境界 ----
+
+/** (a) 初言及: 過去に実行歴があり mentioned=true が一度も無かったプロンプト×エンジンが、本日初めて言及された */
+export const detectFirstMentionsToday = async (): Promise<Array<{ projectId: number; promptText: string; engine: string }>> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT DISTINCT r.project_id, p.text AS prompt_text, r.engine
+    FROM pal_opt_runs r
+    JOIN pal_opt_prompts p ON p.id = r.prompt_id
+    WHERE r.executed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      AND r.mentioned = true AND r.error IS NULL
+      AND EXISTS (
+        SELECT 1 FROM pal_opt_runs r2
+        WHERE r2.prompt_id = r.prompt_id AND r2.engine = r.engine AND r2.error IS NULL
+          AND r2.executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM pal_opt_runs r3
+        WHERE r3.prompt_id = r.prompt_id AND r3.engine = r.engine AND r3.mentioned = true
+          AND r3.executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      )
+    LIMIT 100`;
+  return rows.map((r) => ({ projectId: Number(r.project_id), promptText: String(r.prompt_text), engine: String(r.engine) }));
+};
+
+/** (b) 競合の新出現: 本日の competitors_mentioned にあり、過去14日（本日除く）には無かった名前 */
+export const detectNewCompetitorsToday = async (): Promise<Array<{ projectId: number; name: string }>> => {
+  await ensureTables();
+  const { rows } = await sql`
+    WITH today AS (
+      SELECT project_id, jsonb_array_elements_text(competitors_mentioned) AS name
+      FROM pal_opt_runs
+      WHERE executed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+        AND error IS NULL
+    ), past AS (
+      SELECT project_id, jsonb_array_elements_text(competitors_mentioned) AS name
+      FROM pal_opt_runs
+      WHERE executed_at >= NOW() - interval '14 days'
+        AND executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+        AND error IS NULL
+    )
+    SELECT DISTINCT t.project_id, t.name
+    FROM today t
+    WHERE t.name <> ''
+      AND NOT EXISTS (SELECT 1 FROM past pa WHERE pa.project_id = t.project_id AND pa.name = t.name)
+      AND EXISTS (
+        SELECT 1 FROM pal_opt_runs r2
+        WHERE r2.project_id = t.project_id
+          AND r2.executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      )
+    LIMIT 100`;
+  return rows.map((r) => ({ projectId: Number(r.project_id), name: String(r.name) }));
+};
+
+/** (c) 自社サイト初引用: 過去に cited=true が無かったプロジェクトが本日初めて引用された */
+export const detectFirstCitationsToday = async (): Promise<number[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT DISTINCT r.project_id
+    FROM pal_opt_runs r
+    WHERE r.executed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      AND r.cited = true AND r.error IS NULL
+      AND EXISTS (
+        SELECT 1 FROM pal_opt_runs r2
+        WHERE r2.project_id = r.project_id AND r2.error IS NULL
+          AND r2.executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM pal_opt_runs r3
+        WHERE r3.project_id = r.project_id AND r3.cited = true
+          AND r3.executed_at < date_trunc('day', NOW() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'
+      )
+    LIMIT 100`;
+  return rows.map((r) => Number(r.project_id));
+};
+
+// ---------- Articles（Studio送稿記事の効果トラッキング） ----------
+
+export type Article = {
+  id: number;
+  projectId: number;
+  actionId: number | null;
+  title: string;
+  sentAt: string;
+};
+
+const rowToArticle = (r: Record<string, unknown>): Article => ({
+  id: Number(r.id),
+  projectId: Number(r.project_id),
+  actionId: r.action_id === null || r.action_id === undefined ? null : Number(r.action_id),
+  title: String(r.title),
+  sentAt: String(r.sent_at),
+});
+
+export const insertArticle = async (projectId: number, actionId: number | null, title: string): Promise<void> => {
+  await ensureTables();
+  await sql`
+    INSERT INTO pal_opt_articles (project_id, action_id, title)
+    VALUES (${projectId}, ${actionId}, ${title})`;
+};
+
+export const listArticles = async (projectId: number): Promise<Article[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_articles WHERE project_id = ${projectId} ORDER BY sent_at DESC LIMIT 50`;
+  return rows.map(rowToArticle);
 };
 
 // ---------- 管理者用 ----------

@@ -176,6 +176,39 @@ const getGscSummaryRows = async (
   return data.topQueries;
 };
 
+export type GscPageRow = { page: string; clicks: number; impressions: number };
+
+/**
+ * ページ別の検索実績（searchAnalytics query, dimensions:['page']）。
+ * startDate（YYYY-MM-DD）以降の実績を返す。送稿記事の効果トラッキング用。
+ */
+export const getGscPages = async (token: string, siteUrl: string, startDate: string, rowLimit = 100): Promise<GscPageRow[]> => {
+  const end = new Date(Date.now() - 2 * 864e5); // GSCは2日遅れ
+  const res = await fetch(
+    `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startDate,
+        endDate: end.toISOString().slice(0, 10),
+        dimensions: ['page'],
+        rowLimit,
+      }),
+    },
+  );
+  const data = (await res.json()) as {
+    rows?: Array<{ keys: string[]; clicks: number; impressions: number }>;
+    error?: { message?: string };
+  };
+  if (!res.ok) throw new Error(data.error?.message || `GSC API error (${res.status})`);
+  return (data.rows ?? []).map((r) => ({
+    page: r.keys[0],
+    clicks: r.clicks,
+    impressions: r.impressions,
+  }));
+};
+
 export const getGscSummary = async (token: string, siteUrl: string, days = 28, rowLimit = 20): Promise<GscSummary> => {
   const end = new Date(Date.now() - 2 * 864e5); // GSCは2日遅れ
   const start = new Date(end.getTime() - days * 864e5);

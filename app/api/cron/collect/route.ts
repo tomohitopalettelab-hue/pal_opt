@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { collectBatch, type CollectResult } from '@/lib/collector';
 import { listProjectsNeedingAudit, insertAudit } from '@/lib/db';
 import { runAudit } from '@/lib/audit';
+import { detectAndNotify } from '@/lib/notify';
 
 /**
  * 計測バッチの実行口。
@@ -36,6 +37,14 @@ export async function GET(req: NextRequest) {
       if (r.processed === 0) break; // 対象なし（無限ループ防止）
     } while (remaining > 0 && Date.now() - startedAt < budgetMs);
 
+    // 成果通知の検知（初言及/競合の新出現/自社サイト初引用）
+    let notifications = 0;
+    try {
+      notifications = await detectAndNotify();
+    } catch {
+      /* 通知の失敗は収集結果に影響させない */
+    }
+
     // 週次のサイト自動診断を相乗り（時間が残っている場合のみ）
     let audits = 0;
     if (Date.now() - startedAt < budgetMs) {
@@ -54,7 +63,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, ...totals, audits, remaining });
+    return NextResponse.json({ success: true, ...totals, audits, notifications, remaining });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'collect failed';
     return NextResponse.json({ success: false, ...totals, error: message }, { status: 500 });

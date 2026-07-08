@@ -21,6 +21,14 @@ const shiftMonth = (month: string, diff: number): string => {
   return d.toISOString().slice(0, 7);
 };
 const pct = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 100) : null);
+// TIMESTAMPTZ文字列→JST "M/D"（エポックms経由。文字列ソート/比較はしない）
+const fmtJstDay = (s: string | null): string | null => {
+  if (!s) return null;
+  const ms = new Date(s).getTime();
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms + 9 * 3600e3);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+};
 
 export default async function ReportPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const session = await getSession();
@@ -122,6 +130,29 @@ export default async function ReportPage({ searchParams }: { searchParams: Promi
           })}
           {summary.byEngine.length === 0 && <p className="text-xs font-bold opacity-40">この月の計測データがありません。</p>}
         </div>
+
+        {/* 今月実装した施策（日付つき・言及率と対応づけて見る） */}
+        <div className="mt-5 pt-4 border-t border-[#f2ecf1]">
+          <p className="text-xs font-black opacity-60 mb-1">今月実装した施策</p>
+          <p className="text-[10px] font-bold opacity-40 mb-3">実装日以降の言及率の変化とあわせてご覧ください（ダッシュボードのグラフに実装日のマーカーを表示しています）</p>
+          {summary.doneActions.length === 0 ? (
+            <p className="text-xs font-bold opacity-40">この月に実装済みにした施策はありません。</p>
+          ) : (
+            <ul className="space-y-2">
+              {summary.doneActions.map((a, i) => {
+                const day = fmtJstDay(a.doneAt);
+                return (
+                  <li key={i} className="text-xs font-bold flex items-start gap-2">
+                    <span className="shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-md text-white" style={{ background: 'var(--opt-accent)' }}>
+                      {day ?? '—'}
+                    </span>
+                    <span>{a.title}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
 
       {/* 競合SoV */}
@@ -147,40 +178,22 @@ export default async function ReportPage({ searchParams }: { searchParams: Promi
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-4">
-        {/* 実装した施策 */}
-        <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
-          <p className="text-xs font-black opacity-60 mb-3">今月実装した施策</p>
-          {summary.doneActions.length === 0 ? (
-            <p className="text-xs font-bold opacity-40">この月に実装済みにした施策はありません。</p>
-          ) : (
-            <ul className="space-y-2">
-              {summary.doneActions.map((a, i) => (
-                <li key={i} className="text-xs font-bold flex items-start gap-2">
-                  <span style={{ color: 'var(--opt-accent)' }}>✓</span> {a.title}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* AIが引用した情報源 */}
-        <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
-          <p className="text-xs font-black opacity-60 mb-1">AIが引用した情報源（直近30日）</p>
-          <p className="text-[10px] font-bold opacity-40 mb-3">ここに載ることがAIOの近道です（掲載・口コミ獲得の営業先リスト）</p>
-          {citations.length === 0 ? (
-            <p className="text-xs font-bold opacity-40">引用データがありません。</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {citations.slice(0, 8).map((c) => (
-                <li key={c.domain} className="text-xs font-bold flex justify-between">
-                  <span>{c.domain}</span>
-                  <span className="opacity-40">{c.count}回</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      {/* AIが引用した情報源 */}
+      <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
+        <p className="text-xs font-black opacity-60 mb-1">AIが引用した情報源（直近30日）</p>
+        <p className="text-[10px] font-bold opacity-40 mb-3">ここに載ることがAIOの近道です（掲載・口コミ獲得の営業先リスト）</p>
+        {citations.length === 0 ? (
+          <p className="text-xs font-bold opacity-40">引用データがありません。</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {citations.slice(0, 8).map((c) => (
+              <li key={c.domain} className="text-xs font-bold flex justify-between">
+                <span>{c.domain}</span>
+                <span className="opacity-40">{c.count}回</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* ベスト回答 */}

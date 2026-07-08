@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { LogOut } from 'lucide-react';
 import { getSession } from '@/lib/session-server';
+import NotificationsBell from './NotificationsBell';
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
@@ -47,6 +48,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
             </nav>
           </div>
           <div className="flex items-center gap-4">
+            <NotificationsBell />
             <span className="text-xs font-bold opacity-60">{displayName}</span>
             <a
               href="/api/auth/logout"

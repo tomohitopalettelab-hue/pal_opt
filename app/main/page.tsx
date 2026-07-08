@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import { Radar, Quote, TrendingUp, Stethoscope, Wrench } from 'lucide-react';
+import { Radar, Quote, TrendingUp, Stethoscope, Wrench, PartyPopper } from 'lucide-react';
 import { getSession } from '@/lib/session-server';
-import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts, getLatestAudit, listActions, getShareOfVoice } from '@/lib/db';
+import { getProjectByPaletteId, getDailyStats, listRuns, listPrompts, getLatestAudit, listActions, getShareOfVoice, getLatestUnreadNotification } from '@/lib/db';
 import { ENGINE_LABELS, type Engine } from '@/lib/engines';
 import Onboarding from './Onboarding';
 
@@ -16,13 +16,14 @@ export default async function MainPage() {
   const project = await getProjectByPaletteId(session.paletteId);
   if (!project) return <Onboarding />;
 
-  const [stats, recentRuns, prompts, audit, actions, sov] = await Promise.all([
+  const [stats, recentRuns, prompts, audit, actions, sov, latestNotification] = await Promise.all([
     getDailyStats(project.id, 30),
     listRuns(project.id, { limit: 6 }),
     listPrompts(project.id),
     getLatestAudit(project.id),
     listActions(project.id),
     getShareOfVoice(project.id, 30),
+    getLatestUnreadNotification(project.id),
   ]);
   const openActions = actions.filter((a) => a.status === 'open').length;
   const doneActions = actions.filter((a) => a.status === 'done').length;
@@ -51,8 +52,34 @@ export default async function MainPage() {
   }
   const trend = [...dayMap.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).slice(-30);
 
+  // 実装済み施策のJST日付マップ（グラフの縦マーカー用）。TIMESTAMPTZはエポックms経由でJST日付化
+  const doneByDay = new Map<string, string[]>();
+  for (const a of actions) {
+    if (a.status !== 'done' || !a.doneAt) continue;
+    const ms = new Date(a.doneAt).getTime();
+    if (!Number.isFinite(ms)) continue;
+    const day = new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
+    doneByDay.set(day, [...(doneByDay.get(day) ?? []), a.title]);
+  }
+
   return (
     <div className="space-y-8">
+      {/* 成果通知バナー（最新の未読1件） */}
+      {latestNotification && (
+        <div
+          className="rounded-2xl border px-5 py-3.5 flex items-start gap-3"
+          style={{ background: 'var(--opt-accent-light)', borderColor: '#e5c7db' }}
+        >
+          <PartyPopper size={18} className="shrink-0 mt-0.5" style={{ color: 'var(--opt-accent-dark)' }} />
+          <div className="min-w-0">
+            <p className="text-sm font-black" style={{ color: 'var(--opt-accent-dark)' }}>
+              {latestNotification.title}
+            </p>
+            <p className="text-xs font-bold opacity-60 mt-0.5">{latestNotification.body}</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-xl font-black">{project.businessName}</h1>
@@ -126,7 +153,15 @@ export default async function MainPage() {
 
       {/* 30日トレンド */}
       <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
-        <p className="text-xs font-black opacity-60 mb-4">言及率の推移（30日）</p>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-xs font-black opacity-60">言及率の推移（30日）</p>
+          {doneByDay.size > 0 && (
+            <p className="text-[10px] font-bold opacity-40 flex items-center gap-1.5">
+              <span className="inline-block w-0 h-3 border-l-2 border-dashed" style={{ borderColor: 'var(--opt-accent-dark)' }} />
+              施策を実装した日（ホバーでタスク名）
+            </p>
+          )}
+        </div>
         {trend.length === 0 ? (
           <p className="text-sm font-bold opacity-40 py-8 text-center">
             まだ計測データがありません。観測は毎日自動で実行されます。
@@ -135,14 +170,28 @@ export default async function MainPage() {
           <div className="flex items-end gap-1 h-28">
             {trend.map(([day, v]) => {
               const rate = v.total > 0 ? v.mentioned / v.total : 0;
+              const doneTitles = doneByDay.get(day);
               return (
                 <div key={day} className="flex-1 flex flex-col justify-end group relative">
+                  {doneTitles && (
+                    <>
+                      <div
+                        className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0 border-l-2 border-dashed pointer-events-none"
+                        style={{ borderColor: 'var(--opt-accent-dark)', opacity: 0.55 }}
+                      />
+                      <span
+                        className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full pointer-events-none"
+                        style={{ background: 'var(--opt-accent-dark)' }}
+                      />
+                    </>
+                  )}
                   <div
                     className="rounded-t-md min-h-[2px] transition-all"
                     style={{ height: `${Math.max(rate * 100, 2)}%`, background: 'var(--opt-accent)' , opacity: v.total ? 1 : 0.15 }}
                   />
-                  <span className="hidden group-hover:block absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-black text-white rounded px-1.5 py-0.5 whitespace-nowrap">
+                  <span className="hidden group-hover:block absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-bold bg-black text-white rounded px-1.5 py-0.5 whitespace-nowrap z-10">
                     {day.slice(5)}: {Math.round(rate * 100)}%
+                    {doneTitles ? ` ｜ 施策: ${doneTitles.join(' / ')}` : ''}
                   </span>
                 </div>
               );

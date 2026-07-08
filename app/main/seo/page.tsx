@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, Search, MapPin, Star } from 'lucide-react';
+import { Loader2, Search, MapPin, Star, FileText } from 'lucide-react';
+
+type Article = { id: number; title: string; sentAt: string };
+type BlogPageRow = { page: string; clicks: number; impressions: number };
 
 type GscData = {
   clicks: number;
@@ -230,6 +233,8 @@ export default function SeoMeoPage() {
   const [connected, setConnected] = useState(false);
   const [gsc, setGsc] = useState<GscData | null>(null);
   const [gbp, setGbp] = useState<GbpData | null>(null);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [blogPages, setBlogPages] = useState<BlogPageRow[]>([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -243,6 +248,8 @@ export default function SeoMeoPage() {
           setConnected(Boolean(data.connected));
           setGsc(data.gsc);
           setGbp(data.gbp);
+          setArticles(Array.isArray(data.articles) ? data.articles : []);
+          setBlogPages(Array.isArray(data.blogPages) ? data.blogPages : []);
         }
       } catch {
         setError('通信エラーが発生しました。');
@@ -324,6 +331,60 @@ export default function SeoMeoPage() {
               </table>
             </div>
           </>
+        )}
+        {/* Studio送稿記事の効果トラッキング */}
+        {articles.length > 0 && (
+          <div className="mt-4 bg-white rounded-3xl border border-[#eadfe7] p-6">
+            <h3 className="text-xs font-black flex items-center gap-2 mb-1">
+              <FileText size={14} style={{ color: 'var(--opt-accent)' }} /> 送稿した記事（Pal Studioブログ）
+            </h3>
+            <p className="text-[10px] font-bold opacity-40 mb-3">
+              記事はStudio側で公開されるとGoogle検索に反映されます。下の実績は送稿日以降のブログ配下ページの合計です（ベストエフォート）。
+            </p>
+            <ul className="space-y-2 mb-4">
+              {articles.map((a) => {
+                const ms = new Date(a.sentAt).getTime();
+                const day = Number.isFinite(ms)
+                  ? new Date(ms + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '/')
+                  : '';
+                return (
+                  <li key={a.id} className="text-xs font-bold flex items-start gap-2">
+                    <span className="shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-md text-white" style={{ background: 'var(--opt-accent)' }}>
+                      {day}
+                    </span>
+                    <span>{a.title}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            {!gsc || gsc.error ? (
+              <p className="text-[11px] font-bold opacity-40">
+                Search Console連携が有効になると、送稿後のクリック・表示回数がここに表示されます。
+              </p>
+            ) : blogPages.length === 0 ? (
+              <p className="text-[11px] font-bold opacity-40">
+                送稿日以降、ブログ配下ページの検索実績はまだ計測されていません（公開・インデックスまで時間がかかります）。
+              </p>
+            ) : (
+              <div>
+                <div className="flex items-center gap-6 mb-2">
+                  <p className="text-[11px] font-black">
+                    ブログ全体の送稿後実績:
+                    <span className="ml-2">クリック {blogPages.reduce((a, p) => a + p.clicks, 0)}</span>
+                    <span className="ml-3">表示 {blogPages.reduce((a, p) => a + p.impressions, 0)}</span>
+                  </p>
+                </div>
+                <ul className="space-y-1">
+                  {blogPages.slice(0, 5).map((p) => (
+                    <li key={p.page} className="text-[11px] font-bold flex justify-between gap-3">
+                      <span className="truncate opacity-70">{p.page.replace(/^https?:\/\/[^/]+/, '')}</span>
+                      <span className="shrink-0 opacity-40">クリック {p.clicks} / 表示 {p.impressions}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

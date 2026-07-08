@@ -23,7 +23,44 @@ export type AuditResult = {
 };
 
 const FETCH_TIMEOUT = 12_000;
+const PSI_TIMEOUT = 20_000;
 const UA = 'Mozilla/5.0 (compatible; PalOptAudit/1.0; +https://pal-opt.vercel.app)';
+
+/**
+ * PageSpeed Insights（キー不要の公開エンドポイント）。
+ * 失敗・タイムアウト時は null（該当チェックは passed:null=スコア対象外）。
+ */
+type PsiResult = { performance: number | null; lcpMs: number | null };
+const fetchPageSpeed = async (url: string): Promise<PsiResult | null> => {
+  const call = (async (): Promise<PsiResult | null> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PSI_TIMEOUT);
+      const res = await fetch(
+        `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance`,
+        { signal: controller.signal },
+      );
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        lighthouseResult?: {
+          categories?: { performance?: { score?: number } };
+          audits?: Record<string, { numericValue?: number }>;
+        };
+      };
+      const perf = data.lighthouseResult?.categories?.performance?.score;
+      const lcp = data.lighthouseResult?.audits?.['largest-contentful-paint']?.numericValue;
+      return {
+        performance: typeof perf === 'number' ? Math.round(perf * 100) : null,
+        lcpMs: typeof lcp === 'number' ? lcp : null,
+      };
+    } catch {
+      return null;
+    }
+  })();
+  // 念のためのハードリミット（間に合わなければ null でスコア対象外）
+  return Promise.race([call, new Promise<null>((resolve) => setTimeout(() => resolve(null), PSI_TIMEOUT + 1_000))]);
+};
 
 const fetchText = async (url: string): Promise<{ status: number; text: string; finalUrl: string } | null> => {
   try {
@@ -132,6 +169,9 @@ export const runAudit = async (project: Project): Promise<AuditResult> => {
   if (!origin) {
     return { score: 0, checks: [], fetchedUrl: null, error: 'URLが不正です' };
   }
+
+  // PageSpeedは遅いので先に投げておき、最後に回収する
+  const psiPromise = fetchPageSpeed(siteUrl);
 
   const page = await fetchText(siteUrl);
   if (!page || page.status >= 400) {
@@ -308,6 +348,108 @@ export const runAudit = async (project: Project): Promise<AuditResult> => {
     weight: 1,
     detail: hasAddress ? '住所らしい表記があります。' : '住所が見つかりません。',
     howToFix: '店舗/事務所の住所をテキストで掲載してください。',
+  });
+
+  // --- HTML品質（画像alt / 内部リンク / canonical / favicon / h2） ---
+  const imgTags = html.match(/<img\b[^>]*>/gi) ?? [];
+  const imgWithAlt = imgTags.filter((t) => /\balt\s*=\s*["'][^"']+["']/i.test(t)).length;
+  const altRate = imgTags.length > 0 ? imgWithAlt / imgTags.length : null;
+  push({
+    key: 'img_alt',
+    label: '画像の代替テキスト（alt）',
+    passed: altRate === null ? null : altRate >= 0.7,
+    weight: 1,
+    detail:
+      altRate === null
+        ? '画像が見つかりませんでした（判定対象外）。'
+        : `画像${imgTags.length}枚中${imgWithAlt}枚にaltあり（${Math.round(altRate * 100)}%）。`,
+    howToFix: altRate !== null && altRate < 0.7 ? '主要な画像に内容を説明するalt属性を付けてください（AIは画像をaltで理解します）。' : undefined,
+  });
+
+  const hrefs = [...html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"'#][^"']*)["']/gi)].map((m) => m[1].trim());
+  const internalLinks = hrefs.filter((h) => {
+    if (/^(mailto:|tel:|javascript:)/i.test(h)) return false;
+    if (/^https?:\/\//i.test(h)) {
+      try {
+        return new URL(h).origin === origin;
+      } catch {
+        return false;
+      }
+    }
+    return true; // 相対リンク
+  }).length;
+  push({
+    key: 'internal_links',
+    label: '内部リンクの充実（20本以上）',
+    passed: internalLinks >= 20,
+    weight: 1,
+    detail: `内部リンクを${internalLinks}本検出。`,
+    howToFix: internalLinks < 20 ? 'サービス紹介・FAQ・ブログ等へ回遊できる内部リンクを増やしてください（クローラーの巡回性が上がります）。' : undefined,
+  });
+
+  const hasCanonical = /<link[^>]*rel=["']canonical["'][^>]*>/i.test(html);
+  push({
+    key: 'canonical',
+    label: 'canonicalタグ',
+    passed: hasCanonical,
+    weight: 1,
+    detail: hasCanonical ? 'canonicalが設定されています。' : 'canonicalタグがありません。',
+    howToFix: '<link rel="canonical" href="正規URL"> を<head>に設定し、重複URLの評価分散を防いでください。',
+  });
+
+  let hasFavicon = /<link[^>]*rel=["'][^"']*icon[^"']*["'][^>]*>/i.test(html);
+  if (!hasFavicon) {
+    const fav = await fetchText(`${origin}/favicon.ico`);
+    hasFavicon = Boolean(fav && fav.status === 200);
+  }
+  push({
+    key: 'favicon',
+    label: 'ファビコン',
+    passed: hasFavicon,
+    weight: 1,
+    detail: hasFavicon ? 'ファビコンがあります。' : 'ファビコンが見つかりません。',
+    howToFix: 'favicon.ico を設置するか <link rel="icon"> を追加してください（検索結果・AI回答での信頼感につながります）。',
+  });
+
+  const h2Count = (html.match(/<h2[\s>]/gi) ?? []).length;
+  push({
+    key: 'h2_multiple',
+    label: '見出し構造（h2が複数）',
+    passed: h2Count >= 2,
+    weight: 1,
+    detail: `h2見出しを${h2Count}個検出。`,
+    howToFix: h2Count < 2 ? 'コンテンツをh2見出しで段落分けしてください（AIは見出し単位で内容を抽出します）。' : undefined,
+  });
+
+  // --- 表示速度（PageSpeed Insights・モバイル） ---
+  const psi = await psiPromise;
+  push({
+    key: 'psi_performance',
+    label: '表示速度スコア（PageSpeedモバイル 50以上）',
+    passed: psi?.performance == null ? null : psi.performance >= 50,
+    weight: 2,
+    detail:
+      psi?.performance == null
+        ? 'PageSpeed計測が完了しませんでした（スコア対象外）。'
+        : `Performanceスコア ${psi.performance}/100。`,
+    howToFix:
+      psi?.performance != null && psi.performance < 50
+        ? '画像の圧縮・次世代フォーマット化、不要なスクリプト削減などで表示速度を改善してください。'
+        : undefined,
+  });
+  push({
+    key: 'psi_lcp',
+    label: '主要コンテンツの表示速度（LCP 4秒以内）',
+    passed: psi?.lcpMs == null ? null : psi.lcpMs <= 4_000,
+    weight: 1,
+    detail:
+      psi?.lcpMs == null
+        ? 'LCPを計測できませんでした（スコア対象外）。'
+        : `LCP ${(psi.lcpMs / 1000).toFixed(1)}秒。`,
+    howToFix:
+      psi?.lcpMs != null && psi.lcpMs > 4_000
+        ? 'メインビジュアル画像の軽量化・遅延読み込みの見直しでLCPを短縮してください。'
+        : undefined,
   });
 
   const applicable = checks.filter((c) => c.passed !== null);

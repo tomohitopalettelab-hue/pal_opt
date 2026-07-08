@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/session-server';
-import { getProjectByPaletteId, getAction, listMissedPrompts } from '@/lib/db';
+import { getProjectByPaletteId, getAction, listMissedPrompts, insertArticle } from '@/lib/db';
 import { generateArticle, publishDraftToStudio } from '@/lib/studio';
 
 export const maxDuration = 120;
@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
     const missed = await listMissedPrompts(project.id, 5);
     const article = await generateArticle(project, action, missed);
     await publishDraftToStudio(project.paletteId, article, `${project.id}-${action.id}`);
+    // 効果トラッキング用に送稿記事を記録（失敗しても送稿自体は成功として返す）
+    await insertArticle(project.id, action.id, article.title).catch(() => {});
     return NextResponse.json({ success: true, title: article.title });
   } catch (e) {
     const message = e instanceof Error ? e.message : '送稿に失敗しました。';
