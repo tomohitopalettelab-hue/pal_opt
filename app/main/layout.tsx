@@ -39,6 +39,9 @@ export default async function MainLayout({ children }: { children: React.ReactNo
               <Link href="/main/actions" className="opacity-70 hover:opacity-100 transition-opacity">
                 改善タスク
               </Link>
+              <Link href="/main/hub" className="opacity-70 hover:opacity-100 transition-opacity">
+                ハブページ
+              </Link>
               <Link href="/main/seo" className="opacity-70 hover:opacity-100 transition-opacity">
                 SEO/MEO
               </Link>

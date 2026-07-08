@@ -98,6 +98,21 @@ export const ensureTables = (): Promise<void> => {
           sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`;
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_articles_project_idx ON pal_opt_articles (project_id, sent_at DESC)`;
+      // AIOハブページ（Studioホストの1枚ページ）
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS hub_enabled BOOLEAN NOT NULL DEFAULT false`;
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS hub_url TEXT`;
+      await sql`ALTER TABLE pal_opt_projects ADD COLUMN IF NOT EXISTS hub_data JSONB`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS pal_opt_hub_faq_suggestions (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES pal_opt_projects(id) ON DELETE CASCADE,
+          question TEXT NOT NULL,
+          answer TEXT NOT NULL,
+          source_prompt TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await sql`CREATE INDEX IF NOT EXISTS pal_opt_hub_faq_suggestions_project_idx ON pal_opt_hub_faq_suggestions (project_id, status)`;
     })();
   }
   return ensured;
@@ -116,6 +131,8 @@ export type Project = {
   googleConnected: boolean;
   gbpLocation: string | null;
   gscSite: string | null;
+  hubEnabled: boolean;
+  hubUrl: string | null;
 };
 
 export type Prompt = {
@@ -161,6 +178,8 @@ const rowToProject = (r: Record<string, unknown>): Project => ({
   googleConnected: Boolean(r.google_refresh_token),
   gbpLocation: r.gbp_location ? String(r.gbp_location) : null,
   gscSite: r.gsc_site ? String(r.gsc_site) : null,
+  hubEnabled: Boolean(r.hub_enabled),
+  hubUrl: r.hub_url ? String(r.hub_url) : null,
 });
 
 /** Google連携情報の保存（refresh tokenは上書きのみ・nullで解除） */
@@ -822,6 +841,145 @@ export const listAllProjectStats = async (): Promise<AdminProjectStat[]> => {
     lastRunAt: r.last_run_at ? String(r.last_run_at) : null,
     auditScore: r.audit_score === null ? null : Number(r.audit_score),
   }));
+};
+
+// ---------- AIOハブページ ----------
+
+export type HubFaq = { q: string; a: string };
+
+export type HubData = {
+  businessName: string;
+  description: string;
+  postalCode: string;
+  address: string;
+  tel: string;
+  businessHours: string;
+  homepageUrl: string;
+  sameAs: string[];
+  faq: HubFaq[];
+  showColumns: boolean;
+};
+
+export const normalizeHubData = (input: unknown): HubData => {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const faq = (Array.isArray(raw.faq) ? raw.faq : [])
+    .map((f) => {
+      const item = (f && typeof f === 'object' ? f : {}) as Record<string, unknown>;
+      return { q: String(item.q ?? '').trim(), a: String(item.a ?? '').trim() };
+    })
+    .filter((f) => f.q && f.a)
+    .slice(0, 50);
+  return {
+    businessName: String(raw.businessName ?? '').trim(),
+    description: String(raw.description ?? '').trim(),
+    postalCode: String(raw.postalCode ?? '').trim(),
+    address: String(raw.address ?? '').trim(),
+    tel: String(raw.tel ?? '').trim(),
+    businessHours: String(raw.businessHours ?? '').trim(),
+    homepageUrl: String(raw.homepageUrl ?? '').trim(),
+    sameAs: toStringArray(raw.sameAs).slice(0, 10),
+    faq,
+    showColumns: raw.showColumns !== false,
+  };
+};
+
+export const getHubData = async (projectId: number): Promise<HubData | null> => {
+  await ensureTables();
+  const { rows } = await sql`SELECT hub_data FROM pal_opt_projects WHERE id = ${projectId}`;
+  const raw = rows[0]?.hub_data;
+  return raw ? normalizeHubData(raw) : null;
+};
+
+export const setHubState = async (
+  projectId: number,
+  state: { enabled?: boolean; url?: string | null; data?: HubData },
+): Promise<void> => {
+  await ensureTables();
+  if (state.enabled !== undefined) {
+    await sql`UPDATE pal_opt_projects SET hub_enabled = ${state.enabled}, updated_at = NOW() WHERE id = ${projectId}`;
+  }
+  if (state.url !== undefined) {
+    await sql`UPDATE pal_opt_projects SET hub_url = ${state.url}, updated_at = NOW() WHERE id = ${projectId}`;
+  }
+  if (state.data !== undefined) {
+    await sql`UPDATE pal_opt_projects SET hub_data = ${JSON.stringify(state.data)}::jsonb, updated_at = NOW() WHERE id = ${projectId}`;
+  }
+};
+
+export type HubFaqSuggestion = {
+  id: number;
+  projectId: number;
+  question: string;
+  answer: string;
+  sourcePrompt: string | null;
+  status: 'open' | 'approved' | 'dismissed';
+  createdAt: string;
+};
+
+const rowToHubFaqSuggestion = (r: Record<string, unknown>): HubFaqSuggestion => ({
+  id: Number(r.id),
+  projectId: Number(r.project_id),
+  question: String(r.question),
+  answer: String(r.answer),
+  sourcePrompt: r.source_prompt ? String(r.source_prompt) : null,
+  status: (['open', 'approved', 'dismissed'].includes(String(r.status))
+    ? String(r.status)
+    : 'open') as HubFaqSuggestion['status'],
+  createdAt: String(r.created_at),
+});
+
+export const listHubFaqSuggestions = async (projectId: number): Promise<HubFaqSuggestion[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_hub_faq_suggestions WHERE project_id = ${projectId}
+    ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, created_at DESC
+    LIMIT 100`;
+  return rows.map(rowToHubFaqSuggestion);
+};
+
+/** Q&A案を挿入（同一質問は却下済み以外と重複させない） */
+export const insertHubFaqSuggestions = async (
+  projectId: number,
+  items: Array<{ question: string; answer: string; sourcePrompt?: string | null }>,
+): Promise<number> => {
+  await ensureTables();
+  let inserted = 0;
+  for (const item of items) {
+    const question = item.question.trim();
+    const answer = item.answer.trim();
+    if (!question || !answer) continue;
+    const { rowCount } = await sql`
+      INSERT INTO pal_opt_hub_faq_suggestions (project_id, question, answer, source_prompt)
+      SELECT ${projectId}, ${question}, ${answer}, ${item.sourcePrompt ?? null}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM pal_opt_hub_faq_suggestions
+        WHERE project_id = ${projectId} AND question = ${question} AND status != 'dismissed'
+      )`;
+    inserted += rowCount ?? 0;
+  }
+  return inserted;
+};
+
+export const getHubFaqSuggestion = async (
+  projectId: number,
+  suggestionId: number,
+): Promise<HubFaqSuggestion | null> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT * FROM pal_opt_hub_faq_suggestions
+    WHERE id = ${suggestionId} AND project_id = ${projectId} LIMIT 1`;
+  return rows.length ? rowToHubFaqSuggestion(rows[0]) : null;
+};
+
+export const setHubFaqSuggestionStatus = async (
+  projectId: number,
+  suggestionId: number,
+  status: HubFaqSuggestion['status'],
+): Promise<void> => {
+  await ensureTables();
+  await sql`
+    UPDATE pal_opt_hub_faq_suggestions SET status = ${status}
+    WHERE id = ${suggestionId} AND project_id = ${projectId}`;
 };
 
 // ---------- Stats ----------
