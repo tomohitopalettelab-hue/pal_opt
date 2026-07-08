@@ -18,6 +18,8 @@ export default async function AuditPage() {
   return (
     <AuditView
       siteUrl={project.siteUrl}
+      hubUrl={project.hubUrl}
+      hubEnabled={project.hubEnabled}
       initialAudit={
         audit
           ? { score: audit.score, checks: audit.checks as AuditCheck[], runAt: audit.runAt, fetchedUrl: audit.fetchedUrl }

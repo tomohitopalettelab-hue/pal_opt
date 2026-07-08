@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collectBatch, type CollectResult } from '@/lib/collector';
-import { listProjectsNeedingAudit, insertAudit } from '@/lib/db';
+import { listProjectsNeedingAudit, listProjectsNeedingHubAudit, insertAudit } from '@/lib/db';
 import { runAudit } from '@/lib/audit';
 import { detectAndNotify } from '@/lib/notify';
 
@@ -54,7 +54,25 @@ export async function GET(req: NextRequest) {
         try {
           const result = await runAudit(project);
           if (!result.error) {
-            await insertAudit(project.id, result.score, result.checks, result.fetchedUrl);
+            await insertAudit(project.id, result.score, result.checks, result.fetchedUrl, 'site');
+            audits += 1;
+          }
+        } catch {
+          /* 個別失敗は無視（翌日再試行） */
+        }
+      }
+    }
+
+    // ハブページ有効なプロジェクトはハブ側も週次診断（同予算内で相乗り）
+    if (Date.now() - startedAt < budgetMs) {
+      const staleHubs = await listProjectsNeedingHubAudit(5);
+      for (const project of staleHubs) {
+        if (Date.now() - startedAt >= budgetMs) break;
+        if (!project.hubUrl) continue;
+        try {
+          const result = await runAudit({ ...project, siteUrl: project.hubUrl });
+          if (!result.error) {
+            await insertAudit(project.id, result.score, result.checks, result.fetchedUrl, 'hub');
             audits += 1;
           }
         } catch {

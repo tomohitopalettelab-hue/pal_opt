@@ -19,29 +19,82 @@ const scoreZone = (score: number): { label: string; color: string; bg: string } 
 
 const scoreColor = (score: number) => scoreZone(score).color;
 
+type HistoryData = Array<{ runAt: string; score: number }>;
+
 export default function AuditView({
   siteUrl,
+  hubUrl,
+  hubEnabled,
   initialAudit,
-  history,
+  history: initialHistory,
 }: {
   siteUrl: string | null;
+  hubUrl: string | null;
+  hubEnabled: boolean;
   initialAudit: AuditData | null;
-  history: Array<{ runAt: string; score: number }>;
+  history: HistoryData;
 }) {
-  const [audit, setAudit] = useState(initialAudit);
+  const [target, setTarget] = useState<'site' | 'hub'>('site');
+  const [store, setStore] = useState<Record<'site' | 'hub', { audit: AuditData | null; history: HistoryData } | undefined>>({
+    site: { audit: initialAudit, history: initialHistory },
+    hub: undefined,
+  });
   const [running, setRunning] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const audit = store[target]?.audit ?? null;
+  const history = store[target]?.history ?? [];
+  const targetUrl = target === 'hub' ? hubUrl : siteUrl;
+
+  const switchTarget = async (next: 'site' | 'hub') => {
+    setTarget(next);
+    setError('');
+    if (store[next] !== undefined) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/app/audit?target=${next}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setStore((st) => ({
+          ...st,
+          [next]: {
+            audit: data.audit
+              ? { score: data.audit.score, checks: data.audit.checks, runAt: data.audit.runAt, fetchedUrl: data.audit.fetchedUrl }
+              : null,
+            history: data.history ?? [],
+          },
+        }));
+      }
+    } catch {
+      /* 表示だけの読み込みなので黙って空にしておく */
+    }
+    setLoading(false);
+  };
 
   const run = async () => {
     setRunning(true);
     setError('');
     try {
-      const res = await fetch('/api/app/audit', { method: 'POST' });
+      const res = await fetch('/api/app/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setError(data?.error || '診断に失敗しました。');
       } else {
-        setAudit(data.audit);
+        setStore((st) => {
+          const prev = st[target] ?? { audit: null, history: [] };
+          return {
+            ...st,
+            [target]: {
+              audit: data.audit,
+              history: [...prev.history, { runAt: data.audit.runAt, score: data.audit.score }].slice(-12),
+            },
+          };
+        });
       }
     } catch {
       setError('通信エラーが発生しました。');
@@ -69,13 +122,32 @@ export default function AuditView({
         <div>
           <h1 className="text-xl font-black">サイト診断（AIOスコア）</h1>
           <p className="text-xs font-bold opacity-50 mt-1">
-            {siteUrl ? `対象: ${siteUrl}` : 'サイトURLが未設定です。プロジェクト設定で登録してください。'}
-            ・AIに引用されやすいサイトかを機械診断します（毎週自動実行）
+            {targetUrl
+              ? `対象: ${targetUrl}`
+              : target === 'hub'
+                ? 'ハブページが未公開です。「ハブページ」から公開すると診断できます。'
+                : 'サイトURLが未設定です。プロジェクト設定で登録してください。'}
+            ・AIに引用されやすいページかを機械診断します（毎週自動実行）
           </p>
+          {hubEnabled && hubUrl && (
+            <div className="flex items-center gap-1 mt-3 bg-[#f2ecf1] rounded-full p-1 w-fit">
+              {(['site', 'hub'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => switchTarget(t)}
+                  className={`text-[11px] font-black px-4 py-1.5 rounded-full transition-colors ${
+                    target === t ? 'bg-white shadow-sm' : 'opacity-50 hover:opacity-80'
+                  }`}
+                >
+                  {t === 'site' ? '既存HP' : 'ハブページ'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <button
           onClick={run}
-          disabled={running || !siteUrl}
+          disabled={running || loading || !targetUrl}
           className="shrink-0 flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-black text-white disabled:opacity-40"
           style={{ background: 'var(--opt-accent)' }}
         >

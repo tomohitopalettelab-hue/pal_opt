@@ -124,15 +124,25 @@ export const hubPublicUrl = (paletteId: string): string => {
   return `${publicOrigin}/hub/${encodeURIComponent(paletteId)}`;
 };
 
+export type HubDnsRecord = { type: string; name: string; value: string; ttl?: number };
+
+export type HubDomainStatus = {
+  domain: string;
+  verified: boolean;
+  requiredDns: HubDnsRecord[];
+  error?: string;
+};
+
 /**
  * ハブページをStudioへupsert（作成/更新/無効化はすべてここを通す）。
  * Studio側の受け口は POST /api/admin/aio-hub（x-studio-admin-key認証）。
+ * customDomain（モデルB）も同時に送り、Studio側でVercelへのドメイン追加まで行う。
  */
 export const upsertHubToStudio = async (
   project: Project,
   hub: HubData,
   enabled: boolean,
-): Promise<{ hubUrl: string }> => {
+): Promise<{ hubUrl: string; domain: HubDomainStatus | null }> => {
   const { origin, apiKey } = studioConfig();
   const res = await fetch(`${origin}/api/admin/aio-hub`, {
     method: 'POST',
@@ -140,6 +150,7 @@ export const upsertHubToStudio = async (
     body: JSON.stringify({
       paletteId: project.paletteId,
       enabled,
+      customDomain: hub.customDomain || null,
       hub: {
         ...hub,
         industry: project.industry || '',
@@ -147,11 +158,33 @@ export const upsertHubToStudio = async (
       },
     }),
   });
-  const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+  const data = (await res.json().catch(() => ({}))) as {
+    success?: boolean;
+    error?: string;
+    customDomain?: HubDomainStatus | null;
+  };
   if (!res.ok || !data.success) {
     throw new Error(data.error || `Studioへのハブ反映に失敗しました (${res.status})`);
   }
-  return { hubUrl: hubPublicUrl(project.paletteId) };
+  return { hubUrl: hubPublicUrl(project.paletteId), domain: data.customDomain ?? null };
+};
+
+/** カスタムドメインのDNS検証状態をStudio経由で確認（モデルB） */
+export const checkHubDomain = async (paletteId: string): Promise<HubDomainStatus | null> => {
+  const { origin, apiKey } = studioConfig();
+  const res = await fetch(
+    `${origin}/api/admin/aio-hub?paletteId=${encodeURIComponent(paletteId)}&checkDomain=1`,
+    { headers: { 'x-studio-admin-key': apiKey }, cache: 'no-store' },
+  );
+  const data = (await res.json().catch(() => ({}))) as {
+    success?: boolean;
+    error?: string;
+    customDomain?: HubDomainStatus | null;
+  };
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || `ドメイン状態の確認に失敗しました (${res.status})`);
+  }
+  return data.customDomain ?? null;
 };
 
 export type HubFaqDraft = { question: string; answer: string; sourcePrompt: string | null };

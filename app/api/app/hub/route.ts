@@ -10,7 +10,7 @@ import {
   type HubData,
   type Project,
 } from '@/lib/db';
-import { upsertHubToStudio, generateHubFaqDrafts } from '@/lib/studio';
+import { upsertHubToStudio, checkHubDomain, generateHubFaqDrafts } from '@/lib/studio';
 
 export const maxDuration = 120;
 
@@ -70,9 +70,9 @@ export async function POST(req: NextRequest) {
       if (!data || !data.businessName) {
         data = await buildInitialHubData(project);
       }
-      const { hubUrl } = await upsertHubToStudio(project, data, true);
+      const { hubUrl, domain } = await upsertHubToStudio(project, data, true);
       await setHubState(project.id, { enabled: true, url: hubUrl, data });
-      return NextResponse.json({ success: true, hub: { enabled: true, url: hubUrl, data } });
+      return NextResponse.json({ success: true, hub: { enabled: true, url: hubUrl, data }, domain });
     }
 
     if (action === 'save') {
@@ -81,12 +81,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: '事業者名は必須です。' }, { status: 400 });
       }
       let url = project.hubUrl;
+      let domain = null;
       if (project.hubEnabled) {
         const res = await upsertHubToStudio(project, data, true);
         url = res.hubUrl;
+        domain = res.domain;
       }
       await setHubState(project.id, { data, url });
-      return NextResponse.json({ success: true, hub: { enabled: project.hubEnabled, url, data } });
+      return NextResponse.json({ success: true, hub: { enabled: project.hubEnabled, url, data }, domain });
+    }
+
+    if (action === 'checkDomain') {
+      const domain = await checkHubDomain(project.paletteId);
+      return NextResponse.json({ success: true, domain });
     }
 
     if (action === 'disable') {

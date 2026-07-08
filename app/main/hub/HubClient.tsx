@@ -5,6 +5,7 @@ import {
   Loader2, Globe, Copy, Check, ExternalLink, Sparkles, X, Plus, Trash2, Link2, Mail,
 } from 'lucide-react';
 import type { HubData, HubFaqSuggestion } from '@/lib/db';
+import type { HubDomainStatus } from '@/lib/studio';
 
 type ProjectLite = {
   businessName: string;
@@ -26,6 +27,7 @@ const emptyHub = (p: ProjectLite): HubData => ({
   sameAs: p.siteUrl ? [p.siteUrl] : [],
   faq: [],
   showColumns: true,
+  customDomain: '',
 });
 
 const hostOf = (url: string): string => {
@@ -53,7 +55,7 @@ export default function HubClient({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
-  const [subdomain, setSubdomain] = useState('faq');
+  const [domainStatus, setDomainStatus] = useState<HubDomainStatus | null>(null);
 
   const homepageHost = useMemo(() => hostOf(data.homepageUrl || project.siteUrl || ''), [data.homepageUrl, project.siteUrl]);
 
@@ -94,6 +96,7 @@ export default function HubClient({
     setEnabled(true);
     setHubUrl(hub.url);
     setData(hub.data);
+    if (json.domain !== undefined) setDomainStatus(json.domain as HubDomainStatus | null);
     setNotice('ハブページを公開しました。下のスニペットを既存HPに設置してください。');
   };
 
@@ -107,6 +110,7 @@ export default function HubClient({
     const hub = json.hub as { url: string | null; data: HubData };
     if (hub.url) setHubUrl(hub.url);
     setData(hub.data);
+    if (json.domain !== undefined) setDomainStatus(json.domain as HubDomainStatus | null);
     setNotice(enabled ? '保存し、公開ページへ反映しました。' : '保存しました（ハブページは未公開です）。');
   };
 
@@ -141,11 +145,30 @@ export default function HubClient({
     if (status === 'approved') setNotice('FAQをハブページに追記しました。');
   };
 
+  const checkDomain = async () => {
+    const json = await call('checkDomain', '/api/app/hub', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'checkDomain' }),
+    });
+    if (!json) return;
+    const st = json.domain as HubDomainStatus | null;
+    setDomainStatus(st);
+    if (!st) setNotice('カスタムドメインは未設定です。');
+    else if (st.verified) setNotice(`DNS設定が確認できました。https://${st.domain}/ で公開されています。`);
+    else setNotice('DNSはまだ反映されていません。設定後、最大48時間かかる場合があります。');
+  };
+
   const linkSnippet = hubUrl
     ? `<a href="${hubUrl}">よくある質問・店舗情報｜${data.businessName || project.businessName}</a>`
     : '';
 
-  const dnsHost = homepageHost || 'example.com';
+  const customDomain = data.customDomain || '';
+  const domainParts = customDomain.split('.');
+  const dnsSub = domainParts.length > 2 ? domainParts[0] : 'faq';
+  const dnsHost = domainParts.length > 2 ? domainParts.slice(1).join('.') : (homepageHost || 'example.com');
+  const cnameValue =
+    domainStatus?.requiredDns?.find((r) => r.type.toUpperCase() === 'CNAME')?.value || CNAME_TARGET;
   const dnsTemplate = `ご担当者様
 
 お世話になっております。${data.businessName || project.businessName}です。
@@ -153,11 +176,11 @@ export default function HubClient({
 
 ■ 追加するDNSレコード（1件のみ）
 ・種別: CNAME
-・ホスト名: ${subdomain}（フルネーム: ${subdomain}.${dnsHost}）
-・値（参照先）: ${CNAME_TARGET}
+・ホスト名: ${dnsSub}（フルネーム: ${dnsSub}.${dnsHost}）
+・値（参照先）: ${cnameValue}
 
 ■ 補足（影響範囲について）
-・新しいサブドメイン「${subdomain}.${dnsHost}」を追加するだけの作業です
+・新しいサブドメイン「${dnsSub}.${dnsHost}」を追加するだけの作業です
 ・既存のWebサイト本体（${dnsHost} / www.${dnsHost}）の表示には一切変更・影響はありません
 ・メール（MXレコード等）にも変更・影響はありません
 ・反映には数分〜最大48時間ほどかかる場合があります
@@ -408,26 +431,66 @@ export default function HubClient({
         </div>
       </div>
 
-      {/* B昇格: 独自サブドメイン（DNS依頼文テンプレ） */}
+      {/* B昇格: 独自サブドメイン（申請 + DNS依頼文テンプレ） */}
       <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
         <div className="flex items-center gap-2 mb-2">
           <Mail size={16} style={{ color: 'var(--opt-accent)' }} />
           <h2 className="text-sm font-black">オプション: 独自サブドメインで公開する（DNS1行）</h2>
         </div>
-        <p className="text-[11px] font-bold opacity-50 mb-4">
+        <p className="text-[11px] font-bold opacity-50 mb-1">
           ハブページをお客様ドメインのサブドメイン（例: faq.{homepageHost || 'あなたのドメイン'}）で公開できます。
-          ホームページの制作会社・ドメイン管理者に、下の依頼文をそのまま送ってください。既存サイトやメールへの影響はありません。
-          <br />DNS設定の完了後、当社側でドメインの割当作業を行いますので、サポートまでご連絡ください。
+          ①下にサブドメインを入力して「申請して保存」→②制作会社・ドメイン管理者へ依頼文を送付→③反映後「DNS設定状況を確認」で完了です。
+          既存サイトやメールへの影響はありません。
         </p>
-        <div className="flex items-center gap-2 mb-3">
-          <label className="text-[11px] font-black opacity-50 shrink-0">サブドメイン</label>
+        <p className="text-[11px] font-bold opacity-50 mb-4">
+          補足: 標準の当社ドメイン公開ではハブは顧客のGoogle Search Consoleに表示されませんが、サブドメイン公開ならドメインプロパティで自動的に計測対象になります。
+        </p>
+
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <label className="text-[11px] font-black opacity-50 shrink-0">カスタムドメイン</label>
           <input
-            className={`${inputCls} max-w-[160px]`}
-            value={subdomain}
-            onChange={(e) => setSubdomain(e.target.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+            className={`${inputCls} max-w-[280px]`}
+            value={data.customDomain}
+            placeholder={`faq.${homepageHost || 'example.com'}`}
+            onChange={(e) =>
+              setData({ ...data, customDomain: e.target.value.trim().toLowerCase().replace(/[^a-z0-9.-]/g, '') })
+            }
           />
-          <span className="text-xs font-bold opacity-50">.{homepageHost || 'example.com'}</span>
+          <button
+            onClick={save}
+            disabled={busy !== null || !enabled}
+            className="flex items-center gap-1 text-[11px] font-black px-4 py-2 rounded-full text-white disabled:opacity-50"
+            style={{ background: 'var(--opt-accent)' }}
+            title={enabled ? '' : '先にハブページを公開してください'}
+          >
+            {busy === 'save' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} 申請して保存
+          </button>
+          <button
+            onClick={checkDomain}
+            disabled={busy !== null || !enabled}
+            className="flex items-center gap-1 text-[11px] font-bold px-3 py-2 rounded-full border border-[#eadfe7] hover:bg-[#faf7f9] disabled:opacity-50"
+          >
+            {busy === 'checkDomain' ? <Loader2 size={12} className="animate-spin" /> : null} DNS設定状況を確認
+          </button>
         </div>
+
+        {domainStatus && (
+          <div
+            className={`text-[11px] font-bold rounded-2xl px-4 py-3 mb-3 border ${
+              domainStatus.verified
+                ? 'bg-[#eaf6f0] border-[#bfe3d2] text-[#0d7a54]'
+                : 'bg-[#fdf3df] border-[#f0dcb0] text-[#8a6410]'
+            }`}
+          >
+            {domainStatus.verified ? (
+              <>設定完了: <a className="underline" href={`https://${domainStatus.domain}/`} target="_blank" rel="noopener noreferrer">https://{domainStatus.domain}/</a> で公開中です。</>
+            ) : (
+              <>DNS反映待ち: {domainStatus.domain} はまだ確認できていません。下の依頼文でCNAME追加を依頼してください（反映まで最大48時間）。</>
+            )}
+            {domainStatus.error ? <span className="block opacity-70 mt-1">{domainStatus.error}</span> : null}
+          </div>
+        )}
+
         <textarea readOnly className={`${inputCls} min-h-[220px] text-xs leading-relaxed`} value={dnsTemplate} />
         <div className="mt-3">
           <button

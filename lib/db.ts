@@ -113,6 +113,8 @@ export const ensureTables = (): Promise<void> => {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`;
       await sql`CREATE INDEX IF NOT EXISTS pal_opt_hub_faq_suggestions_project_idx ON pal_opt_hub_faq_suggestions (project_id, status)`;
+      // 診断対象（site=既存HP / hub=AIOハブページ）。既存行は site 扱い
+      await sql`ALTER TABLE pal_opt_audits ADD COLUMN IF NOT EXISTS target TEXT NOT NULL DEFAULT 'site'`;
     })();
   }
   return ensured;
@@ -384,6 +386,8 @@ export const listRuns = async (
 
 // ---------- Audits ----------
 
+export type AuditTarget = 'site' | 'hub';
+
 export type Audit = {
   id: number;
   projectId: number;
@@ -391,6 +395,7 @@ export type Audit = {
   score: number;
   checks: unknown[];
   fetchedUrl: string | null;
+  target: AuditTarget;
 };
 
 const rowToAudit = (r: Record<string, unknown>): Audit => ({
@@ -400,32 +405,45 @@ const rowToAudit = (r: Record<string, unknown>): Audit => ({
   score: Number(r.score),
   checks: Array.isArray(r.checks) ? (r.checks as unknown[]) : [],
   fetchedUrl: r.fetched_url ? String(r.fetched_url) : null,
+  target: r.target === 'hub' ? 'hub' : 'site',
 });
 
-export const insertAudit = async (projectId: number, score: number, checks: unknown[], fetchedUrl: string | null): Promise<Audit> => {
+export const insertAudit = async (
+  projectId: number,
+  score: number,
+  checks: unknown[],
+  fetchedUrl: string | null,
+  target: AuditTarget = 'site',
+): Promise<Audit> => {
   await ensureTables();
   const { rows } = await sql`
-    INSERT INTO pal_opt_audits (project_id, score, checks, fetched_url)
-    VALUES (${projectId}, ${score}, ${JSON.stringify(checks)}, ${fetchedUrl})
+    INSERT INTO pal_opt_audits (project_id, score, checks, fetched_url, target)
+    VALUES (${projectId}, ${score}, ${JSON.stringify(checks)}, ${fetchedUrl}, ${target})
     RETURNING *`;
   return rowToAudit(rows[0]);
 };
 
-export const getLatestAudit = async (projectId: number): Promise<Audit | null> => {
+export const getLatestAudit = async (projectId: number, target: AuditTarget = 'site'): Promise<Audit | null> => {
   await ensureTables();
   const { rows } = await sql`
-    SELECT * FROM pal_opt_audits WHERE project_id = ${projectId} ORDER BY run_at DESC LIMIT 1`;
+    SELECT * FROM pal_opt_audits WHERE project_id = ${projectId} AND target = ${target}
+    ORDER BY run_at DESC LIMIT 1`;
   return rows.length ? rowToAudit(rows[0]) : null;
 };
 
-export const getAuditHistory = async (projectId: number, limit = 12): Promise<Array<{ runAt: string; score: number }>> => {
+export const getAuditHistory = async (
+  projectId: number,
+  limit = 12,
+  target: AuditTarget = 'site',
+): Promise<Array<{ runAt: string; score: number }>> => {
   await ensureTables();
   const { rows } = await sql`
-    SELECT run_at, score FROM pal_opt_audits WHERE project_id = ${projectId} ORDER BY run_at DESC LIMIT ${limit}`;
+    SELECT run_at, score FROM pal_opt_audits WHERE project_id = ${projectId} AND target = ${target}
+    ORDER BY run_at DESC LIMIT ${limit}`;
   return rows.map((r) => ({ runAt: String(r.run_at), score: Number(r.score) })).reverse();
 };
 
-/** 週次自動診断の対象（直近7日診断がない active プロジェクト） */
+/** 週次自動診断の対象（直近7日サイト診断がない active プロジェクト） */
 export const listProjectsNeedingAudit = async (limit = 10): Promise<Project[]> => {
   await ensureTables();
   const { rows } = await sql`
@@ -433,7 +451,21 @@ export const listProjectsNeedingAudit = async (limit = 10): Promise<Project[]> =
     WHERE pr.status = 'active' AND pr.site_url IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM pal_opt_audits a
-        WHERE a.project_id = pr.id AND a.run_at > NOW() - interval '7 days'
+        WHERE a.project_id = pr.id AND a.target = 'site' AND a.run_at > NOW() - interval '7 days'
+      )
+    ORDER BY pr.id LIMIT ${limit}`;
+  return rows.map(rowToProject);
+};
+
+/** 週次自動診断の対象（直近7日ハブ診断がない、ハブ有効な active プロジェクト） */
+export const listProjectsNeedingHubAudit = async (limit = 10): Promise<Project[]> => {
+  await ensureTables();
+  const { rows } = await sql`
+    SELECT pr.* FROM pal_opt_projects pr
+    WHERE pr.status = 'active' AND pr.hub_enabled = true AND pr.hub_url IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM pal_opt_audits a
+        WHERE a.project_id = pr.id AND a.target = 'hub' AND a.run_at > NOW() - interval '7 days'
       )
     ORDER BY pr.id LIMIT ${limit}`;
   return rows.map(rowToProject);
@@ -858,6 +890,8 @@ export type HubData = {
   sameAs: string[];
   faq: HubFaq[];
   showColumns: boolean;
+  /** モデルB: 顧客サブドメイン（例 faq.example.com）。空文字=未設定 */
+  customDomain: string;
 };
 
 export const normalizeHubData = (input: unknown): HubData => {
@@ -880,6 +914,7 @@ export const normalizeHubData = (input: unknown): HubData => {
     sameAs: toStringArray(raw.sameAs).slice(0, 10),
     faq,
     showColumns: raw.showColumns !== false,
+    customDomain: String(raw.customDomain ?? '').trim().toLowerCase(),
   };
 };
 
