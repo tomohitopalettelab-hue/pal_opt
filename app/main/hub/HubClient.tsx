@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  Loader2, Globe, Copy, Check, ExternalLink, Sparkles, X, Plus, Trash2, Link2, Mail,
+  Loader2, Globe, Copy, Check, ExternalLink, Sparkles, X, Plus, Trash2, Link2, Mail, Wand2,
 } from 'lucide-react';
 import type { HubData, HubFaqSuggestion } from '@/lib/db';
 import type { HubDomainStatus } from '@/lib/studio';
@@ -56,6 +56,7 @@ export default function HubClient({
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const [domainStatus, setDomainStatus] = useState<HubDomainStatus | null>(null);
+  const [autofillSources, setAutofillSources] = useState<{ site: boolean; gbp: boolean } | null>(null);
 
   const homepageHost = useMemo(() => hostOf(data.homepageUrl || project.siteUrl || ''), [data.homepageUrl, project.siteUrl]);
 
@@ -157,6 +158,20 @@ export default function HubClient({
     if (!st) setNotice('カスタムドメインは未設定です。');
     else if (st.verified) setNotice(`DNS設定が確認できました。https://${st.domain}/ で公開されています。`);
     else setNotice('DNSはまだ反映されていません。設定後、最大48時間かかる場合があります。');
+  };
+
+  const autofill = async () => {
+    const json = await call('autofill', '/api/app/hub', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'autofill' }),
+    });
+    if (!json) return;
+    setData(json.data as HubData);
+    const sources = json.sources as { site: boolean; gbp: boolean };
+    setAutofillSources(sources);
+    const from = [sources.gbp ? 'Googleビジネスプロフィール' : '', sources.site ? '既存HP' : ''].filter(Boolean).join('と');
+    setNotice(`${from}から情報を取得しました。内容を確認・修正して「保存」してください（まだ保存されていません）。`);
   };
 
   const linkSnippet = hubUrl
@@ -326,9 +341,27 @@ export default function HubClient({
 
       {/* コンテンツ編集 */}
       <div className="bg-white rounded-3xl border border-[#eadfe7] p-6">
-        <h2 className="text-sm font-black mb-1">ハブページの内容</h2>
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-1">
+          <h2 className="text-sm font-black">ハブページの内容</h2>
+          <div className="flex items-center gap-2">
+            {autofillSources && (
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#f2ecf1] opacity-70">
+                取得元: {[autofillSources.gbp ? 'GBP' : '', autofillSources.site ? 'HP' : ''].filter(Boolean).join('＋')}
+              </span>
+            )}
+            <button
+              onClick={autofill}
+              disabled={busy !== null}
+              className="flex items-center gap-1 text-[11px] font-black px-3 py-1.5 rounded-full border border-[#eadfe7] hover:bg-[#faf7f9] disabled:opacity-50"
+            >
+              {busy === 'autofill' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+              HP・GBPから自動入力
+            </button>
+          </div>
+        </div>
         <p className="text-[11px] font-bold opacity-50 mb-4">
           店名・住所・電話番号（NAP）は既存HPやGoogleビジネスプロフィールと一字一句そろえてください。表記ゆれはAIの信頼度を下げます。
+          「HP・GBPから自動入力」でGoogleビジネスプロフィール（優先）と既存HPの記載を取り込めます。
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

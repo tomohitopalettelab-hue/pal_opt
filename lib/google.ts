@@ -128,6 +128,118 @@ export const getGbpSummary = async (token: string, locationName: string): Promis
   };
 };
 
+export type GbpLocationDetails = {
+  title: string;
+  /** 例: 03-1234-5678 */
+  phone: string;
+  postalCode: string;
+  /** 都道府県+市区町村+番地を連結した1行住所 */
+  address: string;
+  /** 例: 月 10:00〜19:00、火 定休 ... の読みやすい文字列 */
+  businessHours: string;
+  websiteUri: string;
+  categories: string[];
+  /** GBPプロフィールの「ビジネス情報（説明）」 */
+  profileDescription: string;
+};
+
+const GBP_DAY_JP: Record<string, string> = {
+  MONDAY: '月', TUESDAY: '火', WEDNESDAY: '水', THURSDAY: '木',
+  FRIDAY: '金', SATURDAY: '土', SUNDAY: '日',
+};
+
+const fmtGbpTime = (t?: { hours?: number; minutes?: number }): string => {
+  if (!t || t.hours === undefined) return '';
+  return `${t.hours}:${String(t.minutes ?? 0).padStart(2, '0')}`;
+};
+
+/**
+ * GBPロケーション詳細（Business Information API v1）。
+ * 保存形式の locationName は accounts/{a}/locations/{l} なので locations/{l} を抽出して呼ぶ。
+ * 取得できない/権限がない場合は null（呼び出し側はHPソースのみで続行）。
+ */
+export const getGbpLocationDetails = async (
+  token: string,
+  locationName: string,
+): Promise<GbpLocationDetails | null> => {
+  const m = String(locationName || '').match(/locations\/[^/]+$/);
+  const loc = m ? m[0] : String(locationName || '');
+  if (!loc) return null;
+  try {
+    const data = await gget<{
+      title?: string;
+      phoneNumbers?: { primaryPhone?: string };
+      storefrontAddress?: {
+        postalCode?: string;
+        administrativeArea?: string;
+        locality?: string;
+        addressLines?: string[];
+      };
+      regularHours?: {
+        periods?: Array<{
+          openDay?: string;
+          openTime?: { hours?: number; minutes?: number };
+          closeTime?: { hours?: number; minutes?: number };
+        }>;
+      };
+      websiteUri?: string;
+      categories?: {
+        primaryCategory?: { displayName?: string };
+        additionalCategories?: Array<{ displayName?: string }>;
+      };
+      profile?: { description?: string };
+    }>(
+      token,
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${loc}?readMask=title,phoneNumbers,storefrontAddress,regularHours,websiteUri,categories,profile`,
+    );
+
+    const addr = data.storefrontAddress;
+    const address = addr
+      ? [addr.administrativeArea, addr.locality, ...(addr.addressLines ?? [])]
+          .map((x) => String(x || '').trim())
+          .filter(Boolean)
+          .join('')
+      : '';
+
+    // 曜日順に営業時間を整形（複数区間は / で連結）
+    const byDay = new Map<string, string[]>();
+    for (const period of data.regularHours?.periods ?? []) {
+      const day = String(period.openDay || '');
+      if (!GBP_DAY_JP[day]) continue;
+      const open = fmtGbpTime(period.openTime);
+      const close = fmtGbpTime(period.closeTime);
+      if (!open || !close) continue;
+      const list = byDay.get(day) ?? [];
+      list.push(`${open}〜${close}`);
+      byDay.set(day, list);
+    }
+    const businessHours = Object.keys(GBP_DAY_JP)
+      .filter((d) => byDay.has(d))
+      .map((d) => `${GBP_DAY_JP[d]} ${(byDay.get(d) ?? []).join(' / ')}`)
+      .join('、');
+
+    const categories = [
+      data.categories?.primaryCategory?.displayName,
+      ...(data.categories?.additionalCategories ?? []).map((c) => c.displayName),
+    ]
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
+
+    return {
+      title: String(data.title || '').trim(),
+      phone: String(data.phoneNumbers?.primaryPhone || '').trim(),
+      postalCode: String(addr?.postalCode || '').trim(),
+      address,
+      businessHours,
+      websiteUri: String(data.websiteUri || '').trim(),
+      categories,
+      profileDescription: String(data.profile?.description || '').trim(),
+    };
+  } catch {
+    return null;
+  }
+};
+
 // ---------- Search Console (SEO) ----------
 
 export const listGscSites = async (token: string): Promise<string[]> => {

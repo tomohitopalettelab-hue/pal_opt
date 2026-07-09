@@ -11,6 +11,7 @@ import {
   type Project,
 } from '@/lib/db';
 import { upsertHubToStudio, checkHubDomain, generateHubFaqDrafts } from '@/lib/studio';
+import { autofillHubFields } from '@/lib/hub-autofill';
 
 export const maxDuration = 120;
 
@@ -25,10 +26,20 @@ export const maxDuration = 120;
 
 const buildInitialHubData = async (project: Project): Promise<HubData> => {
   const missed = await listMissedPrompts(project.id, 8).catch(() => []);
-  const drafts = await generateHubFaqDrafts(project, missed, []).catch(() => []);
+  const [drafts, autofill] = await Promise.all([
+    generateHubFaqDrafts(project, missed, []).catch(() => []),
+    // 初回作成時はHP・GBPから事業者情報を自動入力（失敗しても既定値で続行）
+    autofillHubFields(project).catch(() => null),
+  ]);
   return normalizeHubData({
     businessName: project.businessName,
-    description: `${project.area ? project.area + 'の' : ''}${project.industry || '事業者'}「${project.businessName}」のよくある質問と店舗・事業者情報をまとめたご案内ページです。`,
+    description:
+      autofill?.fields.description ||
+      `${project.area ? project.area + 'の' : ''}${project.industry || '事業者'}「${project.businessName}」のよくある質問と店舗・事業者情報をまとめたご案内ページです。`,
+    postalCode: autofill?.fields.postalCode || '',
+    address: autofill?.fields.address || '',
+    tel: autofill?.fields.tel || '',
+    businessHours: autofill?.fields.businessHours || '',
     homepageUrl: project.siteUrl || '',
     sameAs: project.siteUrl ? [project.siteUrl] : [],
     faq: drafts.map((d) => ({ q: d.question, a: d.answer })),
@@ -89,6 +100,34 @@ export async function POST(req: NextRequest) {
       }
       await setHubState(project.id, { data, url });
       return NextResponse.json({ success: true, hub: { enabled: project.hubEnabled, url, data }, domain });
+    }
+
+    if (action === 'autofill') {
+      // HP・GBPから事業者情報を再取得してフォーム反映用に返す（保存はしない=ユーザー確認後にsave）
+      const current =
+        (await getHubData(project.id)) ??
+        normalizeHubData({
+          businessName: project.businessName,
+          homepageUrl: project.siteUrl || '',
+          sameAs: project.siteUrl ? [project.siteUrl] : [],
+        });
+      const { fields, sources } = await autofillHubFields(project);
+      if (!sources.site && !sources.gbp) {
+        return NextResponse.json({
+          success: false,
+          error: 'ホームページ・Googleビジネスプロフィールのどちらからも情報を取得できませんでした。サイトURLの設定またはGoogle連携を確認してください。',
+        }, { status: 400 });
+      }
+      const merged = normalizeHubData({
+        ...current,
+        // 取得できた項目だけ上書き（空の結果で既存入力を消さない）
+        description: fields.description || current.description,
+        postalCode: fields.postalCode || current.postalCode,
+        address: fields.address || current.address,
+        tel: fields.tel || current.tel,
+        businessHours: fields.businessHours || current.businessHours,
+      });
+      return NextResponse.json({ success: true, data: merged, sources });
     }
 
     if (action === 'checkDomain') {

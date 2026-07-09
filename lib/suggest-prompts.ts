@@ -23,7 +23,8 @@ const openai = (): OpenAI => {
 };
 
 /** サイト本文をテキスト化して取得（失敗時は空文字。生成は業種ベースにフォールバック） */
-const fetchSiteText = async (siteUrl: string): Promise<string> => {
+/** 既存HPの本文テキストを取得（ハブ自動入力からも共用） */
+export const fetchSiteText = async (siteUrl: string): Promise<string> => {
   try {
     const url = siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`;
     const controller = new AbortController();
